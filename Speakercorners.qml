@@ -1,37 +1,38 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Effects
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Hyprland
+import Quickshell.Networking
+import Quickshell.Bluetooth
+import Quickshell.Services.UPower
 import qs.Commons
 import qs.Ui
 import "Workspaces.js" as WorkspaceModel
+import "IconModel.js" as IconModel
 
 // Speaker Corners — everything the corner of the screen does, in one plugin.
 //
 // One always-mapped fullscreen Overlay window holds:
 //   * embedded hot-corner recognition (top-left / bottom-left / bottom-right)
-//   * the float bar card  (top-left, no backdrop)
-//   * the super-apps grid (screen-centered)
-//   * the floating workspace switcher strip (bottom-center)
-// plus a shared keyboard focus for the two blocking views; a visual scrim is
-// only cast for super-apps.
+//   * the float bar card          (top-left, no backdrop)
+//   * the floating workspace switcher strip (bottom-right)
+// plus keyboard focus for the float bar. The window's `mask` only admits input
+// where something interactive lives, so the desktop stays fully click-through
+// everywhere else.
 //
-// Previously these were three keepLoaded plugins (floatbar, super-apps,
-// workspaces-float) plus the quattro-corners service (4 extra windows per
-// screen). Here a single masked surface replaces all of them: the window's
-// `mask` only admits input where something interactive lives, so the desktop
-// stays fully click-through everywhere else.
+// Previously these were separate plugins (floatbar, workspaces-float) plus the
+// quattro-corners service. This single masked surface replaces them all.
 //
-// Configuration lives in shell.json in the plugin's own entry, using the same
-// schema the quattro-corners bar entry used:
+// Configuration lives in shell.json in the plugin's own entry:
 //   "plugins": [
 //     { "id": "speakercorners",
 //       "dwellMs": 139, "targetSize": 8,
 //       "topLeftAction": "command",  "topLeftCommand": "omarchy-shell floatbar toggle",
 //       "topRightAction": "none",    "topRightCommand": "",
-//       "bottomLeftAction": "command","bottomLeftCommand": "omarchy-shell super-apps toggle",
+//       "bottomLeftAction": "command","bottomLeftCommand": "omarchy menu",
 //       "bottomRightAction": "command","bottomRightCommand": "omarchy-shell workspace-overview toggle" }
 //   ]
 Item {
@@ -46,19 +47,15 @@ Item {
 
   // ---- Per-surface open state -------------------------------------------
   property bool floatbarOpened: false
-  property bool superappsOpened: false
   property bool workspacesOpened: false
 
-  readonly property bool anyOpen: root.floatbarOpened || root.superappsOpened || root.workspacesOpened
+  readonly property bool anyOpen: root.floatbarOpened || root.workspacesOpened
   // The shell's isPluginOpen() reads `opened` off the loaded item; keep it in
   // sync so `omarchy-shell shell toggle speakercorners` round-trips cleanly.
   readonly property bool opened: root.anyOpen
-  // The visual backdrop only appears for super-apps (the float bar is a plain
-  // floating card, no dimming behind it).
-  readonly property bool scrimmed: root.superappsOpened
-  // The blocking views (float bar or super-apps) still take full-screen input
-  // so their widgets are interactive and desktop clicks are swallowed.
-  readonly property bool keysWanted: root.floatbarOpened || root.superappsOpened
+  // The float bar takes full-screen keyboard focus; the workspace strip only
+  // swallows clicks through the mask and never needs the keyboard.
+  readonly property bool keysWanted: root.floatbarOpened
 
   readonly property var appLibrary: root.shell ? root.shell.appLibrary : null
 
@@ -68,6 +65,9 @@ Item {
   property int dwellMs: 139
   property int targetSize: 8
   property bool cornersEnabled: true
+
+  // Persisted order of the float-bar grid cells (drag to reorder).
+  property var gridOrder: []
 
   function setting(key, fallback) {
     var value = root.pluginSettings[key]
@@ -85,25 +85,62 @@ Item {
   function commandFor(edge) {
     if (edge === "top-left") return String(setting("topLeftCommand", "omarchy-shell floatbar toggle"))
     if (edge === "top-right") return String(setting("topRightCommand", ""))
-    if (edge === "bottom-left") return String(setting("bottomLeftCommand", "omarchy-shell super-apps toggle"))
+    if (edge === "bottom-left") return String(setting("bottomLeftCommand", "omarchy menu"))
     if (edge === "bottom-right") return String(setting("bottomRightCommand", "omarchy-shell workspace-overview toggle"))
     return ""
   }
 
   function readConfig() {
     var cfg = ({})
-    if (shell && shell.shellConfig && Array.isArray(shell.shellConfig.plugins)) {
-      var list = shell.shellConfig.plugins
+    var list = root.userShellConfig.plugins
+    if (!Array.isArray(list) && shell && shell.shellConfig && Array.isArray(shell.shellConfig.plugins))
+      list = shell.shellConfig.plugins
+    if (Array.isArray(list)) {
       for (var i = 0; i < list.length; i++) {
         if (list[i] && String(list[i].id) === "speakercorners") { cfg = list[i]; break }
       }
     }
     root.pluginSettings = cfg
-    root.dwellMs = Math.max(120, Math.min(3000, Number(setting("dwellMs", 400) || 400)))
-    root.targetSize = Math.max(4, Math.min(120, Number(setting("targetSize", 24) || 24)))
+    var order = root.setting("floatGridOrder", [])
+    root.gridOrder = Array.isArray(order) ? order.slice() : []
+    root.dwellMs = Math.max(120, Math.min(3000, Number(setting("dwellMs", 139) || 139)))
+    root.targetSize = Math.max(4, Math.min(120, Number(setting("targetSize", 8) || 8)))
     root.cornersEnabled = setting("enabled", true) !== false
     root.configLoaded = true
   }
+
+  // Reads the plugin's own entry straight from ~/.config/omarchy/shell.json.
+  // The injected shell facade has no shell.shellConfig, so without this the
+  // plugin would only ever see defaults.
+  readonly property string userConfigPath: Quickshell.env("HOME") + "/.config/omarchy/shell.json"
+  property var userShellConfig: ({})
+  function parseUserConfig(text) {
+    try {
+      var parsed = JSON.parse(String(text || ""))
+      return Util.isPlainObject(parsed) ? parsed : ({})
+    } catch (e) { return ({}) }
+  }
+  FileView {
+    id: userShellFile
+    path: root.userConfigPath
+    watchChanges: true
+    atomicWrites: true
+    printErrors: false
+    onLoaded: {
+      var str = String(text() || "")
+      // Ignore the echo of our own persistGridOrder write: the drag already
+      // applied the new order in-memory, and a stale re-read would revert it.
+      if (str !== "" && str === root.lastWrittenShellText) return
+      root.userShellConfig = root.parseUserConfig(str)
+      if (root.configLoaded) {
+        root.readConfig()
+        if (root.floatbarOpened) root.refreshWidgetEntries()
+      }
+    }
+    onLoadFailed: root.userShellConfig = ({})
+  }
+  // Content we last pushed via persistGridOrder (see the onLoaded guard).
+  property string lastWrittenShellText: ""
 
   // Notification history toggle state (reused by the "notifications" action).
   property bool historyShown: false
@@ -115,8 +152,8 @@ Item {
   }
 
   // Run a corner action. Commands that target this plugin's own surfaces are
-  // dispatched straight to the matching toggle (no subprocess), everything
-  // else falls back to `sh -lc` exactly like quattro-corners did.
+  // dispatched straight to the matching toggle (no subprocess); everything
+  // else falls back to `sh -lc`.
   function run(cmd) {
     var text = String(cmd || "").trim()
     if (text.length === 0) return
@@ -133,16 +170,8 @@ Item {
       if (method === "toggle") { root.toggleFloatbar() } else if (method === "open") { root.openFloatbar("") } else if (method === "close") { root.closeFloatbar() } else return false
       return true
     }
-    if (target === "super-apps") {
-      if (method === "toggle") { root.toggleSuperapps() } else if (method === "open") { root.openSuperapps("") } else if (method === "close") { root.closeSuperapps() } else return false
-      return true
-    }
     if (target === "workspace-overview") {
       if (method === "toggle") { root.toggleWorkspaces() } else if (method === "open") { root.showWorkspaces() } else if (method === "close") { root.hideWorkspaces() } else return false
-      return true
-    }
-    if (target === "shell" && method === "toggle" && tokens[3] === "super-apps") {
-      root.toggleSuperapps()
       return true
     }
     if (target === "speakercorners") {
@@ -228,31 +257,94 @@ Item {
   readonly property color cardColor: "#000000"
   readonly property color cardBorder: Color.accent
   readonly property color cardText: Color.popups.text
-  readonly property color scrimColor: Color.menu.scrim
 
   // ---- Widgets that never appear in the floatbar ----
   readonly property var removedWidgetIds: [
     "omarchy.keyboard-layout",
-    "omarchy.system-update",
     "omarchy.agents",
     "omarchy.tray",
     "omarchy.indicators"
   ]
 
   // ---- Widgets rendered live inside the floatbar instead of an icon button ----
-  readonly property var embeddedWidgetIds: [ "omarchy.clock", "omarchy.power" ]
-
-  readonly property bool hasPowerWidget: {
-    for (var i = 0; i < root.embeddedWidgets.length; i++)
-      if (String(root.embeddedWidgets[i].id) === "omarchy.power") return true
+  // The clock is drawn by our own ClockRow (click opens the bar's calendar via
+  // the omarchy.clock IPC target, so the popup anchors exactly like the bar).
+  readonly property bool hasClockWidget: {
+    for (var i = 0; i < root.widgetEntries.length; i++)
+      if (String(root.widgetEntries[i].id) === "omarchy.clock") return true
     return false
   }
 
-  function embeddedWidgetSettings(id) {
-    for (var i = 0; i < root.embeddedWidgets.length; i++) {
-      if (String(root.embeddedWidgets[i].id) === id) return root.embeddedWidgets[i].settings || ({})
+  // Latest "omarchy-update-available" verdict: pending updates show an extra
+  // grid button (system-update), mirroring the menu bar behaviour.
+  property bool systemUpdateAvailable: false
+  function checkSystemUpdate() {
+    if (root.systemUpdateProc && !root.systemUpdateProc.running) root.systemUpdateProc.running = true
+  }
+  Process {
+    id: systemUpdateProc
+    command: ["omarchy-update-available"]
+    onExited: function(exitCode) {
+      var next = exitCode === 0
+      if (next !== root.systemUpdateAvailable) {
+        root.systemUpdateAvailable = next
+        if (root.floatbarOpened) root.refreshWidgetEntries()
+      }
     }
-    return ({})
+  }
+  Timer {
+    interval: 21600000
+    running: true
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: root.checkSystemUpdate()
+  }
+
+  // One combined poll for every live indicator; each line below is one output.
+  Process {
+    id: indicatorsQuery
+    command: ["bash", "-lc",
+      "p() { \"$@\" 2>/dev/null; }; "
+      + "printf '%s\\n' \"$(p omarchy-shell nightlight status)\"; "
+      + "printf '%s\\n' \"$(p omarchy-shell notifications dndState)\"; "
+      + "printf '%s\\n' \"$(p omarchy-shell idle status)\"; "
+      + "printf '%s\\n' \"$(p omarchy-reminder show --json)\"; "
+      + "if pgrep --quiet -f '^gpu-screen-recorder'; then echo 1; else echo 0; fi"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.applyIndicatorPoll(text)
+    }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) root.applyIndicatorPoll("")
+    }
+  }
+
+  Timer {
+    id: indicatorRefreshTimer
+    interval: 300
+    repeat: false
+    onTriggered: root.pollIndicators()
+  }
+
+  // Keeps indicator highlights live while the float bar is open.
+  Timer {
+    interval: 5000
+    running: root.floatbarOpened
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: root.pollIndicators()
+  }
+
+  // Closes/opens the menu-bar calendar like a click on the bar's own clock.
+  function toggleCalendar() {
+    Quickshell.execDetached(["omarchy-shell", "omarchy.clock", "toggle"])
+  }
+
+  // Live system mirrors, so the floatbar icons behave like the bar icons:
+  // no polling — the service singletons notify and the bindings re-evaluate.
+  readonly property bool batteryPresent: {
+    var d = UPower.displayDevice
+    return !!(d && d.isPresent)
   }
 
   readonly property var indicatorEntries: [
@@ -264,14 +356,19 @@ Item {
   ]
 
   property var widgetEntries: []
-  property var embeddedWidgets: []
   property var buttonEntries: []
+
+  // App-launcher actions shown in the grid (draggable like everything else).
+  readonly property var actionEntries: [
+    { id: "browser", glyph: "\uf0ac", label: "Browser", command: ["omarchy-launch-browser"] },
+    { id: "terminal", glyph: "\uf120", label: "Terminal", command: ["omarchy-launch-terminal"] }
+  ]
 
   readonly property int buttonTileSize: Math.max(Style.space(46), Style.font.iconLarge + Style.space(18))
   readonly property int cellSpacing: Style.space(10)
 
-  // Every cell of the single icon grid: indicators, then widget buttons, then
-  // the bar-toggle button. Built in refreshWidgetEntries().
+  // Every cell of the single icon grid: indicators, launcher actions, widget
+  // buttons, then the bar-toggle button. Built in refreshWidgetEntries().
   property var gridCells: []
 
   readonly property int gridCols: {
@@ -296,11 +393,10 @@ Item {
   readonly property int computedContentHeight: {
     var h = 0
     if (clockCell.visible) h += clockCell.implicitHeight
-    if (batteryCell.visible) h += batteryCell.implicitHeight
-    var hasTop = clockCell.visible || batteryCell.visible
+    var hasTop = clockCell.visible
     var hasGrid = root.gridCells.length > 0
     if (hasGrid) {
-      if (hasTop) h += Style.space(14) + Math.max(1, Style.space(1)) + Style.space(14)
+      if (hasTop) h += Style.space(14)
       h += root.computedGridHeight
     }
     return Math.max(Style.space(64), h)
@@ -313,9 +409,19 @@ Item {
     return copy
   }
 
+  // The panel facade's shell.barConfig may not be populated on a cold start
+  // (it is copied once from the shell while the plugins load). Reading the bar
+  // layout straight from the user's shell.json instead is always correct.
+  function liveBarLayout() {
+    var u = root.userShellConfig
+    if (u && Util.isPlainObject(u.bar) && u.bar.layout) return u.bar.layout
+    if (shell && shell.barConfig && shell.barConfig.layout) return shell.barConfig.layout
+    return null
+  }
+
   function refreshWidgetEntries() {
     var entries = []
-    var layout = shell && shell.barConfig ? shell.barConfig.layout : null
+    var layout = root.liveBarLayout()
     var sections = layout ? [layout.left, layout.center, layout.right] : []
     for (var s = 0; s < sections.length; s++) {
       var arr = sections[s]
@@ -325,7 +431,6 @@ Item {
         var id = it && it.id ? String(it.id) : ""
         if (!id) continue
         if (id === "omarchy.workspaces") continue
-        if (id === "andreconde.quattro-corners") continue
         if (root.removedWidgetIds.indexOf(id) !== -1) continue
         var dup = false
         for (var j = 0; j < entries.length; j++) {
@@ -337,27 +442,206 @@ Item {
     }
     root.widgetEntries = entries
 
-    var emb = []
     var btns = []
     for (var e = 0; e < entries.length; e++) {
-      if (root.embeddedWidgetIds.indexOf(entries[e].id) !== -1) emb.push(entries[e])
-      else btns.push(entries[e])
+      if (String(entries[e].id) === "omarchy.clock") continue
+      btns.push(entries[e])
     }
-    root.embeddedWidgets = emb
     root.buttonEntries = btns
 
+    // Cells in default order; drag-and-drop afterwards can reorder them and
+    // the result is persisted as floatGridOrder in the plugins[] entry.
     var cells = []
     for (var ind = 0; ind < root.indicatorEntries.length; ind++) {
       var ie = root.indicatorEntries[ind]
       cells.push({ kind: "indicator", id: String(ie.id), glyph: String(ie.glyph || "") })
     }
+    for (var a = 0; a < root.actionEntries.length; a++) {
+      var ae = root.actionEntries[a]
+      cells.push({ kind: "action", id: String(ae.id), glyph: String(ae.glyph || ""),
+        label: String(ae.label || ""), command: ae.command || [] })
+    }
     for (var b = 0; b < btns.length; b++) {
+      if (String(btns[b].id) === "omarchy.menu") continue
+      if (String(btns[b].id) === "omarchy.system-update" && !root.systemUpdateAvailable) continue
+      if (String(btns[b].id) === "omarchy.power" && !root.batteryPresent) continue
       cells.push({ kind: "widget", id: String(btns[b].id), settings: btns[b].settings })
     }
-    cells.push({ kind: "shutdown", id: "shutdown" })
-    cells.push({ kind: "reboot", id: "reboot" })
     cells.push({ kind: "toggle" })
-    root.gridCells = cells
+    for (var c = 0; c < cells.length; c++) cells[c].key = root.cellKeyFor(cells[c])
+    root.gridCells = root.applyGridOrder(cells)
+  }
+
+  function cellKeyFor(cell) {
+    return cell
+      ? String(cell.kind) + ":" + (cell.id ? String(cell.id) : String(cell.kind))
+      : ""
+  }
+
+  function cellGlyph(cell) {
+    if (!cell) return "\uf111"
+    if (cell.kind === "indicator") return root.indicatorGlyph(cell.id)
+    if (cell.kind === "widget") return root.glyphFor(cell.id)
+    if (cell.kind === "action") return String(cell.glyph || "\uf111")
+    if (cell.kind === "toggle") return "\ue900"
+    return "\uf111"
+  }
+
+  function cellGlyphFont(cell) {
+    if (!cell) return root.fontFamily
+    if (cell.kind === "toggle") return "omarchy"
+    if (cell.kind === "widget") return root.glyphFontFor(cell.id)
+    return root.fontFamily
+  }
+
+  function cellLabel(cell) {
+    if (!cell) return ""
+    if (cell.kind === "action") return String(cell.label || cell.id || "")
+    return root.labelFor(cell.id)
+  }
+
+  function cellActive(cell) {
+    if (!cell || cell.kind !== "indicator") return false
+    var s = root.liveIndicatorStates
+    if (cell.id === "NightLight") return s.nightLight === true
+    if (cell.id === "Dnd") return s.dnd === true
+    if (cell.id === "Reminder") return Number(s.reminderCount) > 0
+    if (cell.id === "StayAwake") return s.stayAwake === true
+    if (cell.id === "ScreenRecording") return s.screenRecording === true
+    return false
+  }
+
+  function indexOfCellKey(key) {
+    for (var i = 0; i < root.gridCells.length; i++) {
+      if (root.gridCells[i].key === key) return i
+    }
+    return -1
+  }
+
+  // Reorders a freshly built cell list with the persisted order; unknown keys
+  // (e.g. after a widget was removed) keep their relative default position.
+  // Launcher actions not yet pinned by a drag sit at the front so the new
+  // browser/terminal buttons are reachable out of the box.
+  function applyGridOrder(cells) {
+    if (!Array.isArray(root.gridOrder) || root.gridOrder.length === 0) return cells
+    var front = []
+    var ordered = []
+    var rest = []
+    var byKey = {}
+    var used = {}
+    for (var i = 0; i < cells.length; i++) byKey[cells[i].key] = cells[i]
+    for (var j = 0; j < root.gridOrder.length; j++) {
+      var key = String(root.gridOrder[j] || "")
+      if (!byKey[key] || used[key]) continue
+      ordered.push(byKey[key])
+      used[key] = true
+    }
+    for (var k = 0; k < cells.length; k++) {
+      if (used[cells[k].key]) continue
+      if (String(cells[k].key).slice(0, 7) === "action:") front.push(cells[k])
+      else rest.push(cells[k])
+    }
+    var out = front.concat(ordered).concat(rest)
+    return out
+  }
+
+  // ---- Grid drag-and-drop reordering ------------------------------------
+  readonly property real dragThresholdSq: Math.pow(Math.max(8, Style.space(6)), 2)
+  property bool draggingGrid: false
+  property string dragGridKey: ""
+  property int dragGridFrom: -1
+  property int dragGridTarget: -1
+  // The cell currently highlighted as the drop target ("" while none). Kept as
+  // an own property so GridCell can bind to it declaratively — the gridCells
+  // objects are plain JS and would never notify on in-place mutation.
+  property string dragHighlightKey: ""
+
+  function beginGridDrag(key, scenePt) {
+    var idx = root.indexOfCellKey(key)
+    if (idx < 0) return
+    root.dragGridKey = key
+    root.dragGridFrom = idx
+    root.dragGridTarget = idx
+    root.dragHighlightKey = ""
+    root.draggingGrid = true
+    dragPreview.showFor(key, scenePt)
+  }
+
+  function updateGridDrag(scenePt) {
+    if (!root.draggingGrid) return
+    dragPreview.followScene(scenePt)
+    var t = root.targetIndexForScene(scenePt)
+    if (t >= 0 && t !== root.dragGridTarget) {
+      root.dragGridTarget = t
+    }
+    root.dragHighlightKey = (t >= 0 && t !== root.dragGridFrom)
+      ? String(root.gridCells[t].key)
+      : ""
+  }
+
+  function endGridDrag(scenePt) {
+    if (!root.draggingGrid) return
+    updateGridDrag(scenePt)
+    var from = root.dragGridFrom
+    var to = root.dragGridTarget
+    root.dragHighlightKey = ""
+    root.draggingGrid = false
+    dragPreview.reset()
+    root.dragGridKey = ""
+    root.dragGridFrom = -1
+    root.dragGridTarget = -1
+    if (to >= 0 && to !== from) {
+      var cells = root.gridCells.slice()
+      var moved = cells.splice(from, 1)[0]
+      cells.splice(to, 0, moved)
+      root.gridCells = cells
+      root.persistGridOrder(cells)
+    }
+  }
+
+  function targetIndexForScene(scenePt) {
+    var n = root.gridCells.length
+    if (n <= 0) return -1
+    var origin = widgetGrid.mapToItem(null, 0, 0)
+    var step = root.buttonTileSize + root.cellSpacing
+    var col = Math.floor((scenePt.x - origin.x) / step)
+    var row = Math.floor((scenePt.y - origin.y) / step)
+    var effW = widgetGrid.width
+    var effH = widgetGrid.height
+    var pad = root.buttonTileSize * 0.4
+    if (scenePt.x < origin.x - pad || scenePt.x > origin.x + effW + pad
+        || scenePt.y < origin.y - pad || scenePt.y > origin.y + effH + pad) return -1
+    if (col < 0) col = 0
+    if (row < 0) row = 0
+    var cols = root.gridCols
+    var idx = col + row * cols
+    if (idx >= n) idx = n - 1
+    return idx
+  }
+
+  function persistGridOrder(cells) {
+    var order = []
+    for (var i = 0; i < cells.length; i++) order.push(cells[i].key)
+    // Apply in-memory too, so the grid keeps the dragged order even though the
+    // FileView echo of this write is ignored (see userShellFile.onLoaded).
+    root.gridOrder = order.slice()
+    var payload = JSON.stringify(root.withGridOrder(order), null, 2) + "\n"
+    root.lastWrittenShellText = payload
+    userShellFile.setText(payload)
+  }
+
+  function withGridOrder(order) {
+    var cfg = root.parseUserConfig(userShellFile.text())
+    if (!Array.isArray(cfg.plugins)) cfg.plugins = []
+    var found = false
+    for (var i = 0; i < cfg.plugins.length; i++) {
+      if (cfg.plugins[i] && String(cfg.plugins[i].id) === "speakercorners") {
+        cfg.plugins[i].floatGridOrder = order
+        found = true
+      }
+    }
+    if (!found) cfg.plugins.push({ id: "speakercorners", floatGridOrder: order })
+    return cfg
   }
 
   function labelFor(id) {
@@ -372,13 +656,7 @@ Item {
 
   function glyphFor(id) {
     var map = {
-      "omarchy.menu": "\ue900",
-      "omarchy.keyboard-layout": "\uf11c",
       "omarchy.system-update": "\uf021",
-      "omarchy.tray": "\uf0e0",
-      "omarchy.agents": "\uf007",
-      "omarchy.indicators": "\uf080",
-      "omarchy.clock": "\uf017",
       "omarchy.bluetooth": "\uf294",
       "omarchy.network": "\uf1eb",
       "omarchy.audio": "\uf028",
@@ -400,25 +678,61 @@ Item {
   }
 
   function activateWidget(id) {
-    if (!shell) return
-    if (typeof shell.toggle === "function") shell.toggle(id, "{}")
+    if (id) Quickshell.execDetached(["omarchy-shell", "shell", "toggle", String(id), "{}"])
     Qt.callLater(function() { root.closeFloatbar() })
   }
 
-  function activateIndicator(id, item) {
-    if (!item) return
-    if (typeof item.toggle === "function") { item.toggle(); return }
-    var bar = shell ? shell.bar : null
-    if (id === "Dnd") {
-      var notif = shell ? shell.firstPartyServiceFor("omarchy.notifications") : null
-      if (notif) notif.setDoNotDisturb(!(notif.doNotDisturb === true))
+  // Toggle a live indicator through its owning service's IPC and re-poll its
+  // state a moment later so the highlight follows the click.
+  function activateIndicator(id) {
+    if (id === "NightLight") {
+      Quickshell.execDetached(["omarchy-shell", "nightlight", "toggle"])
+    } else if (id === "Dnd") {
+      Quickshell.execDetached(["omarchy-shell", "notifications", "toggleDnd"])
+    } else if (id === "StayAwake") {
+      var stayAwake = root.liveIndicatorStates.stayAwake === true
+      Quickshell.execDetached(["omarchy-shell", "idle", stayAwake ? "enable" : "disable"])
     } else if (id === "Reminder") {
-      if (item.reminderCount > 0) Quickshell.execDetached(["omarchy-reminder", "show"])
+      if (root.liveIndicatorStates.reminderCount > 0) Quickshell.execDetached(["omarchy-reminder", "show"])
       else Quickshell.execDetached(["omarchy-reminder", "-i"])
-    } else if (id === "Dictation") {
-      if (bar) bar.run("omarchy-voxtype-config")
     } else if (id === "ScreenRecording") {
-      if (bar) bar.run(item.recording ? "omarchy-capture-screenrecording --stop-recording" : "omarchy-menu toggle trigger.capture.screenrecord")
+      var recording = root.liveIndicatorStates.screenRecording === true
+      if (recording) Quickshell.execDetached(["omarchy-capture-screenrecording", "--stop-recording"])
+      else Quickshell.execDetached(["omarchy-menu", "toggle", "trigger.capture.screenrecord"])
+    }
+    root.scheduleIndicatorRefresh(300)
+  }
+
+  // ---- Live indicator state (polled over IPC) ---------------------------
+  property var liveIndicatorStates: ({
+    nightLight: false, dnd: false, reminderCount: 0, reminderTooltip: "", stayAwake: false, screenRecording: false
+  })
+
+  function pollIndicators() {
+    if (!indicatorsQuery.running) indicatorsQuery.running = true
+  }
+  function scheduleIndicatorRefresh(ms) {
+    indicatorRefreshTimer.interval = Math.max(150, Number(ms || 250))
+    indicatorRefreshTimer.restart()
+  }
+  function parseJsonSafe(text) {
+    try {
+      var v = JSON.parse(String(text || ""))
+      return v && typeof v === "object" ? v : ({})
+    } catch (e) { return ({}) }
+  }
+  function applyIndicatorPoll(output) {
+    var lines = String(output || "").split("\n")
+    var nl = root.parseJsonSafe(lines[0])
+    var idl = root.parseJsonSafe(lines[2])
+    var rem = root.parseJsonSafe(lines[3])
+    root.liveIndicatorStates = {
+      nightLight: nl.enabled === true,
+      dnd: String(lines[1] || "").trim().toLowerCase() === "on",
+      reminderCount: Number(rem.count || 0),
+      reminderTooltip: String(rem.tooltip || ""),
+      stayAwake: idl.stayAwake === true,
+      screenRecording: String(lines[4] || "").trim() === "1"
     }
   }
 
@@ -427,241 +741,20 @@ Item {
     Qt.callLater(function() { root.closeFloatbar() })
   }
 
-  function shutdownDevice() {
+  function runSystemUpdate() {
     root.closeFloatbar()
-    Quickshell.execDetached(["omarchy-system-shutdown"])
-  }
-
-  function rebootDevice() {
-    root.closeFloatbar()
-    Quickshell.execDetached(["omarchy-system-reboot"])
+    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", "omarchy-update"])
   }
 
   function openFloatbar(payloadJson) {
     root.readConfig()
     root.refreshWidgetEntries()
+    root.pollIndicators()
+    root.checkSystemUpdate()
     root.floatbarOpened = true
   }
   function closeFloatbar() { root.floatbarOpened = false }
   function toggleFloatbar() { root.floatbarOpened ? root.closeFloatbar() : root.openFloatbar("{}") }
-
-  // ========================================================================
-  //  SUPER-APPS GRID (bottom-left)
-  // ========================================================================
-  property color background: Color.menu.background
-  property color foreground: Color.menu.text
-  property color border: Color.menu.border
-  property var borderSpec: Border.surfaceSpec("menu", "border", border, Math.max(1, Style.space(2)))
-  property color selectedBackground: Color.menu.selectedBackground
-  property color selectedText: Color.menu.selectedText
-  property int contentMargin: Style.spacing.panelPadding
-  property int headerHeight: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
-  property int contentSpacing: Style.spacing.md
-  property int appsCardWidth: Math.min(Style.space(640), panel.width - Style.gapsOut * 2)
-  property int appsCardHeight: Math.min(Style.space(560), panel.height - Style.gapsOut * 2)
-  property int cellMinWidth: Style.space(112)
-  property int cellHeight: Style.space(104)
-  property int iconSize: Style.space(48)
-  property int columns: Math.max(1, Math.floor((appsCardWidth - contentMargin * 2) / cellMinWidth))
-
-  property string filterText: ""
-  property int selectedIndex: 0
-  property bool cursorActive: false
-  property var deleteTarget: null
-  property bool deleteConfirmOpen: false
-
-  ListModel { id: displayModel }
-
-  function openSuperapps(payloadJson) {
-    root.superappsOpened = true
-    root.filterText = ""
-    root.selectedIndex = 0
-    root.cursorActive = false
-    if (root.appLibrary && typeof root.appLibrary.refreshIcons === "function") root.appLibrary.refreshIcons()
-    root.rebuildDisplay()
-    Qt.callLater(function() { keyRouter.forceActiveFocus() })
-  }
-  function closeSuperapps() { root.superappsOpened = false }
-  function dismissSuperapps() {
-    root.superappsOpened = false
-    if (root.shell && typeof root.shell.hide === "function")
-      root.shell.hide((root.manifest && root.manifest.id) || "speakercorners")
-  }
-  function toggleSuperapps() { root.superappsOpened ? root.dismissSuperapps() : root.openSuperapps("{}") }
-
-  // Desktop-entry names are untrusted input (see the original super-apps
-  // plugin notes): force Text.PlainText everywhere, cap length and strip
-  // control characters before the name enters the model.
-  function sanitizeLabel(value) {
-    var s = String(value || "").replace(/[\x00-\x1f\x7f]/g, " ").trim()
-    var maxLength = 80
-    if (s.length > maxLength) s = s.slice(0, maxLength) + "…"
-    return s
-  }
-
-  function escapeMarkup(value) {
-    return String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-  }
-
-  function rebuildDisplay() {
-    displayModel.clear()
-    if (!root.appLibrary) return
-
-    var rows = root.appLibrary.sortedEntries(root.filterText)
-    for (var j = 0; j < rows.length; j++) {
-      var entry = rows[j].entry
-      var appId = String(entry.id || "")
-      if (!appId) continue
-      displayModel.append({
-        appId: appId,
-        label: root.sanitizeLabel(root.appLibrary.entryName(entry)),
-        appIcon: String(entry.icon || "")
-      })
-    }
-
-    if (displayModel.count === 0) selectedIndex = 0
-    else if (selectedIndex >= displayModel.count) selectedIndex = displayModel.count - 1
-    else if (selectedIndex < 0) selectedIndex = 0
-
-    Qt.callLater(function() {
-      if (displayModel.count > 0) appGrid.positionViewAtIndex(root.selectedIndex, GridView.Contain)
-    })
-  }
-
-  function select(delta) {
-    if (displayModel.count === 0) return
-    if (!cursorActive) {
-      cursorActive = true
-      selectedIndex = delta < 0 ? displayModel.count - 1 : 0
-    } else {
-      selectedIndex = (selectedIndex + delta + displayModel.count) % displayModel.count
-    }
-    appGrid.positionViewAtIndex(selectedIndex, GridView.Contain)
-  }
-
-  function selectRow(delta) {
-    if (displayModel.count === 0) return
-    if (!cursorActive) {
-      cursorActive = true
-      selectedIndex = delta < 0 ? displayModel.count - 1 : 0
-      appGrid.positionViewAtIndex(selectedIndex, GridView.Contain)
-      return
-    }
-    var newIndex = selectedIndex + delta * columns
-    if (newIndex < 0) newIndex = 0
-    if (newIndex >= displayModel.count) newIndex = displayModel.count - 1
-    selectedIndex = newIndex
-    appGrid.positionViewAtIndex(selectedIndex, GridView.Contain)
-  }
-
-  function selectPage(delta) {
-    if (displayModel.count === 0) return
-    if (!cursorActive) {
-      cursorActive = true
-      selectedIndex = delta < 0 ? displayModel.count - 1 : 0
-      appGrid.positionViewAtIndex(selectedIndex, GridView.Contain)
-      return
-    }
-    var visibleRows = Math.max(1, Math.floor(appGrid.height / root.cellHeight))
-    var newIndex = selectedIndex + delta * root.columns * visibleRows
-    if (newIndex < 0) newIndex = 0
-    if (newIndex >= displayModel.count) newIndex = displayModel.count - 1
-    selectedIndex = newIndex
-    appGrid.positionViewAtIndex(selectedIndex, GridView.Contain)
-  }
-
-  function requestDeleteSelected() {
-    if (!root.cursorActive || root.selectedIndex < 0 || root.selectedIndex >= displayModel.count) return
-    var row = displayModel.get(root.selectedIndex)
-    root.deleteTarget = { appId: row.appId, label: row.label }
-    deleteConfirm.selectedIndex = 1
-    root.deleteConfirmOpen = true
-  }
-
-  function cancelDelete() {
-    root.deleteConfirmOpen = false
-    root.deleteTarget = null
-    Qt.callLater(function() { keyRouter.forceActiveFocus() })
-  }
-
-  function confirmDelete() {
-    var target = root.deleteTarget
-    root.deleteConfirmOpen = false
-    root.deleteTarget = null
-    if (!target || !root.appLibrary) return
-    root.appLibrary.remove(target.appId, target.label)
-  }
-
-  function setFilter(nextFilter) {
-    root.filterText = nextFilter
-    root.selectedIndex = 0
-    root.cursorActive = nextFilter.length > 0
-    root.rebuildDisplay()
-  }
-
-  function activateIndex(index) {
-    if (index < 0 || index >= displayModel.count) return
-    var row = displayModel.get(index)
-    root.launch(row.appId, row.label)
-  }
-
-  function launch(appId, label) {
-    if (!appId || !root.appLibrary) return
-    root.dismissSuperapps()
-    root.appLibrary.launch(appId, label)
-  }
-
-  // Central keyboard routing. While super-apps is up it owns every key (filter
-  // typing, arrows, Enter, Delete, Esc); otherwise Escape dismisses the float
-  // bar. Keys never reach here while only the workspace strip is showing.
-  function superappsKey(event) {
-    if (root.deleteConfirmOpen) {
-      if (deleteConfirm.handleKey(event)) event.accepted = true
-      return
-    }
-
-    if (event.key === Qt.Key_Escape) {
-      if (root.filterText) root.setFilter("")
-      else root.dismissSuperapps()
-      event.accepted = true
-    } else if (event.key === Qt.Key_Delete) {
-      root.requestDeleteSelected()
-      event.accepted = true
-    } else if (Util.editsFilter(event, root.filterText)) {
-      root.setFilter(Util.editedFilter(event, root.filterText))
-      event.accepted = true
-    } else if (event.key === Qt.Key_Left) {
-      root.select(-1)
-      event.accepted = true
-    } else if (event.key === Qt.Key_Right) {
-      root.select(1)
-      event.accepted = true
-    } else if (event.key === Qt.Key_Up) {
-      root.selectRow(-1)
-      event.accepted = true
-    } else if (event.key === Qt.Key_Down) {
-      root.selectRow(1)
-      event.accepted = true
-    } else if (event.key === Qt.Key_PageUp) {
-      root.selectPage(-1)
-      event.accepted = true
-    } else if (event.key === Qt.Key_PageDown) {
-      root.selectPage(1)
-      event.accepted = true
-    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-      if (root.cursorActive) root.activateIndex(root.selectedIndex)
-      else if (displayModel.count > 0) root.cursorActive = true
-      event.accepted = true
-    } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
-      root.setFilter(root.filterText + event.text)
-      event.accepted = true
-    }
-  }
-
-  Connections {
-    target: root.appLibrary
-    function onAppsChanged() { if (root.superappsOpened) root.rebuildDisplay() }
-  }
 
   // ========================================================================
   //  WORKSPACES FLOAT STRIP (bottom-right)
@@ -779,19 +872,26 @@ Item {
     else wsHideTimer.restart()
   }
 
-  // Switch to the workspace behind a clicked card. Omarchy runs Hyprland in
-  // Lua mode, so workspace focus goes through the Lua dispatcher.
-  function focusWorkspace(ws) {
-    if (!ws) return
-    var target = (ws.name && String(ws.name).length > 0) ? String(ws.name) : String(ws.id)
-    var escaped = target.replace(/[\\"\x00-\x1f\x7f]/g, function(ch) {
+  // Escape a value as a single-line Lua string literal so it can be embedded
+  // in a hyprctl Lua dispatcher expression.
+  function luaStringLiteral(value) {
+    return String(value || "").replace(/[\\"\x00-\x1f\x7f]/g, function(ch) {
       if (ch === "\\") return "\\\\"
       if (ch === '"') return '\\"'
       var decimal = ch.charCodeAt(0).toString()
       return "\\" + ("000" + decimal).slice(-3)
     })
-    var expr = 'hl.dsp.focus({ workspace = "' + escaped + '" })'
-    Quickshell.execDetached('hyprctl dispatch ' + Util.shellQuote(expr))
+  }
+
+  // Switch to the workspace behind a clicked card. Omarchy runs Hyprland in
+  // Lua mode, so workspace focus goes through the Lua dispatcher expression
+  // rather than the plain "workspace <id>" dispatcher (which errors under
+  // hl.dispatch wrap).
+  function focusWorkspace(ws) {
+    if (!ws) return
+    var target = (ws.name && String(ws.name).length > 0) ? String(ws.name) : String(ws.id)
+    var expr = 'hl.dsp.focus({ workspace = "' + root.luaStringLiteral(target) + '" })'
+    Quickshell.execDetached(["hyprctl", "dispatch", expr])
   }
 
   // Open the first empty workspace after the last used one. "Used" means a
@@ -807,7 +907,8 @@ Item {
       }
     }
     var target = maxUsed + 1
-    Quickshell.execDetached('hyprctl dispatch workspace ' + target)
+    var expr = 'hl.dsp.focus({ workspace = "' + root.luaStringLiteral(String(target)) + '" })'
+    Quickshell.execDetached(["hyprctl", "dispatch", expr])
     root.hideWorkspaces()
   }
 
@@ -876,7 +977,6 @@ Item {
   }
   function close() {
     root.closeFloatbar()
-    root.superappsOpened = false
     root.hideWorkspaces()
     return "ok"
   }
@@ -887,7 +987,6 @@ Item {
   function stateString() {
     return (root.anyOpen ? "open" : "closed")
       + " float=" + (root.floatbarOpened ? "1" : "0")
-      + " apps=" + (root.superappsOpened ? "1" : "0")
       + " ws=" + (root.workspacesOpened ? "1" : "0")
   }
 
@@ -900,21 +999,13 @@ Item {
   }
 
   // Legacy targets so existing commands/scripts keep working even though the
-  // three old plugins are gone.
+  // old floatbar and workspaces-float plugins are gone.
   IpcHandler {
     target: "floatbar"
     function open(): string { root.openFloatbar(""); return "ok" }
     function close(): string { root.closeFloatbar(); return "ok" }
     function toggle(): string { root.toggleFloatbar(); return "ok" }
     function state(): string { return root.floatbarOpened ? "open" : "closed" }
-  }
-
-  IpcHandler {
-    target: "super-apps"
-    function open(): string { root.openSuperapps(""); return "ok" }
-    function close(): string { root.closeSuperapps(); return "ok" }
-    function toggle(): string { root.toggleSuperapps(); return "ok" }
-    function state(): string { return root.superappsOpened ? "open" : "closed" }
   }
 
   IpcHandler {
@@ -934,7 +1025,7 @@ Item {
 
     readonly property bool armed: root.cornersEnabled
     // Fired latches until the pointer leaves, so resting in the corner opens
-    // once instead of hammering the toggle (same as quattro's dwell latch).
+    // once instead of hammering the toggle on every dwell pass.
     property bool fired: false
 
     width: root.targetSize
@@ -982,31 +1073,21 @@ Item {
 
     // Input is restricted to what is actually interactive, so everything else
     // on screen keeps receiving the pointer. Always-on: the four corner hot
-    // zones. While a blocking view is up the whole screen belongs to the
-    // scrim, and while the workspace strip is showing it keeps its clicks.
+    // zones. While the float bar is up the whole screen belongs to it (to
+    // swallow outside clicks), and the workspace strip keeps its clicks while
+    // showing.
     mask: Region {
       // four corner squares
       Region { x: 0; y: 0; width: root.cornersEnabled ? root.targetSize : 0; height: root.targetSize }
       Region { x: panel.width - root.targetSize; y: 0; width: root.cornersEnabled ? root.targetSize : 0; height: root.targetSize }
       Region { x: 0; y: panel.height - root.targetSize; width: root.cornersEnabled ? root.targetSize : 0; height: root.targetSize }
       Region { x: panel.width - root.targetSize; y: panel.height - root.targetSize; width: root.cornersEnabled ? root.targetSize : 0; height: root.targetSize }
-      // fullscreen block while float bar or super-apps is up
+      // fullscreen block while the float bar is up
       Region { x: 0; y: 0; width: root.keysWanted ? panel.width : 0; height: root.keysWanted ? panel.height : 0 }
       // workspace strip clicks (and null while it is hidden)
       Region { x: root.stripX; y: root.stripY; width: root.workspacesOpened ? root.stripW : 0; height: root.workspacesOpened ? root.stripH : 0 }
       // optional bottom edge (opt-in)
       Region { x: 0; y: root.wsEdgeEnabled ? panel.height - root.wsEdgeHeight : panel.height; width: root.wsEdgeEnabled ? panel.width : 0; height: root.wsEdgeEnabled ? root.wsEdgeHeight : 0 }
-    }
-
-    // ---- Shared scrim (super-apps only; float bar stays backdrop-free) ----
-    Rectangle {
-      anchors.fill: parent
-      visible: root.scrimmed
-      color: root.scrimColor
-
-      Behavior on color {
-        ColorAnimation { duration: 120; easing.type: Easing.OutCubic }
-      }
     }
 
     // Transparent click-catcher: closing the float bar on any outside click.
@@ -1018,19 +1099,8 @@ Item {
       onClicked: root.closeFloatbar()
     }
 
-    MouseArea {
-      anchors.fill: parent
-      z: 1
-      visible: root.scrimmed
-      onClicked: {
-        root.closeFloatbar()
-        root.superappsOpened = false
-      }
-    }
-
     // ---- Float bar card (top-left) ----
     BorderSurface {
-      id: card
       z: 2
       visible: root.floatbarOpened
       radius: root.cornerRadius
@@ -1051,11 +1121,10 @@ Item {
       x: root.cornerMargin
       y: root.cornerMargin
 
-      // Swallow clicks on the card so they don't bubble to the scrim.
+      // Swallow clicks on the card so they don't reach the backdrop catcher.
       MouseArea { anchors.fill: parent; onClicked: { } }
 
       Item {
-        id: itemsRect
         x: parent.contentLeftInset
         y: parent.contentTopInset
         width: parent.width - parent.contentLeftInset - parent.contentRightInset
@@ -1069,27 +1138,10 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
           spacing: Style.space(14)
 
-          EmbeddedWidgetCell {
+          ClockRow {
             id: clockCell
-            visible: root.embeddedWidgets.length > 0
-            widgetId: "omarchy.clock"
-            widgetSettings: root.embeddedWidgets.length > 0 ? root.embeddedWidgets[0].settings : ({})
-            fillRow: true
-          }
-
-          EmbeddedWidgetCell {
-            id: batteryCell
-            visible: root.hasPowerWidget
-            widgetId: "omarchy.power"
-            widgetSettings: root.embeddedWidgetSettings("omarchy.power")
-            fillRow: true
-          }
-
-          Rectangle {
-            visible: (clockCell.visible || batteryCell.visible) && widgetGrid.visible
+            visible: root.hasClockWidget
             width: parent.width
-            height: Math.max(1, Style.space(1))
-            color: Util.alpha(root.cardText, 0.15)
           }
 
           Grid {
@@ -1113,161 +1165,6 @@ Item {
             }
           }
         }
-      }
-    }
-
-    // ---- Super-apps grid card (screen-centered) ----
-    BorderSurface {
-      id: appsCard
-      z: 3
-      visible: root.superappsOpened
-      width: root.appsCardWidth
-      height: root.appsCardHeight
-      radius: root.cornerRadius
-      x: Math.max(Style.gapsOut, Math.floor((panel.width - width) / 2))
-      y: Math.max(Style.gapsOut, Math.floor((panel.height - height) / 2))
-      color: root.background
-      borderSpec: root.borderSpec
-      padding: root.contentMargin
-
-      MouseArea { anchors.fill: parent; onClicked: { } }
-
-      Column {
-        anchors.fill: parent
-        anchors.topMargin: appsCard.contentTopInset
-        anchors.rightMargin: appsCard.contentRightInset
-        anchors.bottomMargin: appsCard.contentBottomInset
-        anchors.leftMargin: appsCard.contentLeftInset
-        spacing: root.contentSpacing
-
-        Rectangle {
-          width: parent.width
-          height: root.headerHeight
-          radius: root.cornerRadius
-          color: "transparent"
-
-          Text {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            horizontalAlignment: Text.AlignHCenter
-            text: root.filterText || "Type to search…"
-            textFormat: Text.PlainText
-            color: root.foreground
-            opacity: root.filterText ? 1 : 0.58
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.heading
-            elide: Text.ElideRight
-          }
-        }
-
-        Item {
-          width: parent.width
-          height: parent.height - root.headerHeight - root.contentSpacing
-
-          GridView {
-            id: appGrid
-            anchors.fill: parent
-            model: displayModel
-            clip: true
-            cellWidth: width / root.columns
-            cellHeight: root.cellHeight
-            boundsBehavior: Flickable.StopAtBounds
-
-            delegate: Rectangle {
-              required property int index
-              required property string appId
-              required property string label
-              required property string appIcon
-
-              readonly property bool hasCursor: root.cursorActive && index === root.selectedIndex
-
-              width: appGrid.cellWidth
-              height: root.cellHeight
-              radius: root.cornerRadius
-              color: hasCursor ? root.selectedBackground : "transparent"
-
-              Column {
-                anchors.centerIn: parent
-                spacing: Style.space(6)
-                width: parent.width - Style.space(8)
-
-                Image {
-                  anchors.horizontalCenter: parent.horizontalCenter
-                  width: root.iconSize
-                  height: root.iconSize
-                  fillMode: Image.PreserveAspectFit
-                  sourceSize.width: width * Screen.devicePixelRatio
-                  sourceSize.height: height * Screen.devicePixelRatio
-                  source: root.appLibrary ? root.appLibrary.iconSource(appIcon) : ""
-                  asynchronous: true
-                }
-
-                Text {
-                  width: parent.width
-                  text: label
-                  textFormat: Text.PlainText
-                  color: hasCursor ? root.selectedText : root.foreground
-                  horizontalAlignment: Text.AlignHCenter
-                  elide: Text.ElideRight
-                  maximumLineCount: 2
-                  wrapMode: Text.WordWrap
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                }
-              }
-
-              MouseArea {
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onContainsMouseChanged: if (containsMouse) {
-                  root.cursorActive = true
-                  root.selectedIndex = index
-                }
-                onClicked: {
-                  root.cursorActive = true
-                  root.selectedIndex = index
-                  root.activateIndex(index)
-                }
-              }
-            }
-          }
-
-          Column {
-            anchors.centerIn: parent
-            spacing: Style.space(8)
-            visible: displayModel.count === 0
-
-            Text {
-              text: "No matches for “" + root.filterText + "”"
-              textFormat: Text.PlainText
-              color: root.foreground
-              opacity: 0.7
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.title
-              horizontalAlignment: Text.AlignHCenter
-              width: parent.width
-            }
-          }
-        }
-      }
-
-      ConfirmDialog {
-        id: deleteConfirm
-        anchors.fill: parent
-        opened: root.deleteConfirmOpen
-        message: "Do you want to uninstall " + root.escapeMarkup((root.deleteTarget && root.deleteTarget.label) || "") + "?"
-        confirmText: "Uninstall"
-        background: root.background
-        foreground: root.foreground
-        scrim: root.scrimColor
-        selectedBackground: root.selectedBackground
-        selectedText: root.selectedText
-        fontFamily: root.fontFamily
-        cornerRadius: root.cornerRadius
-        onCanceled: root.cancelDelete()
-        onConfirmed: root.confirmDelete()
       }
     }
 
@@ -1299,7 +1196,6 @@ Item {
       }
 
       Row {
-        id: cardsRow
         anchors.top: parent.top
         anchors.topMargin: root.wsOuterPad
         anchors.horizontalCenter: parent.horizontalCenter
@@ -1332,7 +1228,9 @@ Item {
             width: root.effectiveWsCardWidth
             height: root.wsCardPreviewH
             radius: root.cornerRadius
-            color: Util.alpha(Color.popups.text, 0.06)
+            color: newWorkspaceArea.containsMouse
+              ? Util.alpha(Color.popups.text, 0.12)
+              : Util.alpha(Color.popups.text, 0.06)
             border.width: Math.max(1, Style.space(1))
             border.color: Util.alpha(Color.popups.text, 0.15)
 
@@ -1345,12 +1243,10 @@ Item {
             }
 
             MouseArea {
+              id: newWorkspaceArea
               anchors.fill: parent
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
-              onContainsMouseChanged: parent.color = containsMouse
-                ? Util.alpha(Color.popups.text, 0.12)
-                : Util.alpha(Color.popups.text, 0.06)
               onClicked: root.openNewWorkspace()
             }
           }
@@ -1370,7 +1266,7 @@ Item {
       }
     }
 
-    // ---- Hot-corner recognition zones (above the scrim) ----
+    // ---- Hot-corner recognition zones ----
     CornerZone {
       z: 10
       anchors.top: parent.top
@@ -1396,7 +1292,7 @@ Item {
       edge: "bottom-right"
     }
 
-    // ---- Shared keyboard router ----
+    // ---- Keyboard routing (float bar only) ----
     Item {
       id: keyRouter
       anchors.fill: parent
@@ -1404,14 +1300,71 @@ Item {
       enabled: root.keysWanted
       Keys.priority: Keys.BeforeItem
       Keys.onPressed: function(event) {
-        if (root.superappsOpened) {
-          root.superappsKey(event)
-          return
-        }
         if (root.floatbarOpened && event.key === Qt.Key_Escape) {
           root.closeFloatbar()
           event.accepted = true
         }
+      }
+    }
+
+    // ---- Drag-and-drop layer: renders the tile being dragged, following the
+    // pointer while a grid reorder is in progress. ----
+    Item {
+      id: dragLayer
+      z: 100
+      anchors.fill: parent
+      visible: root.draggingGrid
+
+      Item {
+        id: dragPreview
+        visible: false
+        width: root.buttonTileSize
+        height: root.buttonTileSize
+        x: -1000
+        y: -1000
+        opacity: 0.92
+        scale: 1.06
+
+        Rectangle {
+          anchors.fill: parent
+          radius: root.cornerRadius
+          color: dragPreview.dataFill
+          border.width: Math.max(1, Style.space(1))
+          border.color: Util.alpha(Color.accent, 0.9)
+        }
+        Text {
+          anchors.centerIn: parent
+          textFormat: Text.PlainText
+          text: dragPreview.glyph
+          color: dragPreview.glyphColor
+          font.family: dragPreview.glyphFont
+          font.pixelSize: Style.font.iconLarge
+          renderType: Text.NativeRendering
+        }
+
+        property string glyph: "\uf111"
+        property string glyphFont: root.fontFamily
+        property color glyphColor: root.cardText
+        property color dataFill: Util.alpha(root.cardText, 0.06)
+
+        function showFor(key, scenePt) {
+          var idx = root.indexOfCellKey(key)
+          var cd = idx >= 0 ? root.gridCells[idx] : null
+          if (!cd) return
+          glyph = root.cellGlyph(cd)
+          glyphFont = root.cellGlyphFont(cd)
+          var on = root.cellActive(cd)
+          glyphColor = on ? Color.accent : Util.alpha(root.cardText, 0.82)
+          dataFill = on ? Util.alpha(Color.accent, 0.32) : Util.alpha(root.cardText, 0.06)
+          visible = true
+          if (scenePt) followScene(scenePt)
+        }
+        function followScene(scenePt) {
+          if (!scenePt) return
+          x = scenePt.x - width / 2
+          y = scenePt.y - height / 2
+        }
+        function reset() { visible = false }
       }
     }
   }
@@ -1421,62 +1374,176 @@ Item {
   // ========================================================================
   //  Reused float-bar components
   // ========================================================================
-  component EmbeddedWidgetCell: Rectangle {
-    id: cell
-    required property string widgetId
-    property var widgetSettings: ({})
-    property bool fillRow: false
+  // The clock row drawn by the floatbar itself. Clicking it toggles the
+  // menu-bar calendar (omarchy.clock IPC target), so the popup appears exactly
+  // as if the bar's own clock had been clicked.
+  component ClockRow: Item {
+    id: cRow
 
-    readonly property int cellWidth: Style.space(240)
-    readonly property int cellPad: Style.space(14)
+    readonly property string format: String(root.setting("clockFormat", "dddd HH:mm"))
+    property date now: new Date()
 
-    readonly property real widgetW: loader.item ? loader.item.implicitWidth : 0
-    readonly property real widgetH: loader.item ? loader.item.implicitHeight : 0
-
-    readonly property var widgetComponent: {
-      var reg = root.barWidgetRegistry
-      var w = reg && reg.widgets ? reg.widgets[cell.widgetId] : null
-      return w ? w.component : null
+    Timer {
+      interval: 1000
+      repeat: true
+      triggeredOnStart: true
+      onTriggered: cRow.now = new Date()
     }
 
-    width: cell.fillRow
-      ? (parent ? parent.width : Math.max(cellWidth, widgetW + cellPad * 2))
-      : Math.max(cellWidth, widgetW + cellPad * 2)
-    implicitHeight: Math.max(Style.space(48), widgetH + cellPad * 2)
-    radius: root.cornerRadius
-    color: Util.alpha(root.cardText, 0.05)
-    border.width: Math.max(1, Style.space(1))
-    border.color: Util.alpha(root.cardText, 0.12)
+    implicitHeight: Style.space(40)
 
-    Item {
-      id: contentBox
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: cell.cellPad
-      anchors.rightMargin: cell.cellPad
+    Text {
+      anchors.centerIn: parent
+      textFormat: Text.PlainText
+      text: Qt.formatDateTime(cRow.now, cRow.format)
+      font.family: Style.font.family
+      font.pixelSize: Style.font.subtitle
+      color: cRowHover.containsMouse
+        ? root.cardText
+        : Util.alpha(root.cardText, 0.88)
+    }
 
-      Loader {
-        id: loader
-        sourceComponent: cell.widgetComponent
-        anchors.centerIn: parent
-        onLoaded: {
-          var item = loader.item
-          if (!item) return
-          if ("bar" in item) item.bar = root.shell ? root.shell.bar : null
-          if ("moduleName" in item) item.moduleName = cell.widgetId
-          if ("settings" in item) item.settings = cell.widgetSettings
-          Qt.callLater(function() { loader.inject() })
-        }
-        function inject() {
-          var item = loader.item
-          if (!item) return
-          if ("bar" in item) item.bar = root.shell ? root.shell.bar : null
-          if ("moduleName" in item) item.moduleName = cell.widgetId
-          if ("settings" in item) item.settings = cell.widgetSettings
-        }
+    MouseArea {
+      id: cRowHover
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: root.toggleCalendar()
+    }
+  }
+
+  // Power / battery tile mirroring the menu-bar battery: live charge level and
+  // charging/plug/AC state straight from UPower (no IPC polling required).
+  component SmartBatteryButton: FloatButton {
+    id: batt
+
+    readonly property var device: UPower.displayDevice
+    readonly property bool hasDevice: !!(batt.device && batt.device.isPresent)
+    readonly property bool onBattery: hasDevice && UPower.onBattery
+    readonly property real fraction: batt.hasDevice
+      ? Math.max(0, Math.min(1, Number(batt.device.percentage || 0)))
+      : 0
+
+    readonly property bool chargeThresholdActive: {
+      var d = batt.device
+      var s = UPowerDeviceState
+      if (!batt.hasDevice || !batt.onBattery) return false
+      if (batt.fraction >= 0.99) return false
+      if (d.state === s.Discharging) return false
+      if (d.state === s.PendingCharge) return true
+      if (d.state === s.FullyCharged && batt.fraction < 0.99) return true
+      if (d.state !== s.Charging) return false
+      return Number(d.changeRate || 0) <= 0.2 || Number(d.timeToFull || 0) >= 8 * 60 * 60
+    }
+    readonly property bool charging: batt.hasDevice
+      && !batt.onBattery && !batt.chargeThresholdActive
+
+    function batteryIcon() {
+      if (!batt.hasDevice) return ""
+      var chargingIcons = ["󰢜", "󰂆", "󰂇", "󰂈", "󰢝", "󰂉", "󰢞", "󰂊", "󰂋", "󰂅"]
+      var defaultIcons = ["󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"]
+      var index = Math.max(0, Math.min(9, Math.floor(batt.fraction * 10)))
+      if (batt.chargeThresholdActive) return defaultIcons[index]
+      if (batt.device.state === UPowerDeviceState.FullyCharged) return "󰂅"
+      if (!batt.onBattery) return chargingIcons[index]
+      return defaultIcons[index]
+    }
+
+    function modeLabel() {
+      var pct = Math.round(batt.fraction * 100)
+      if (batt.chargeThresholdActive) return "Battery " + pct + "% · threshold"
+      if (batt.onBattery) return "Battery " + pct + "% · on battery"
+      if (!batt.onBattery && batt.fraction >= 1) return "Battery " + pct + "% · fully charged"
+      return "Battery " + pct + "% · charging"
+    }
+
+    text: batt.batteryIcon()
+    tooltip: batt.modeLabel()
+    visible: batt.hasDevice
+    onClicked: root.activateWidget("omarchy.power")
+  }
+
+  // Bluetooth tile mirroring the menu-bar icon: off / on / connected.
+  component SmartBluetoothButton: FloatButton {
+    id: btb
+
+    readonly property var adapter: Bluetooth.defaultAdapter
+    readonly property var devices: Bluetooth.devices ? Bluetooth.devices.values : []
+    readonly property bool enabled: !!(btb.adapter && btb.adapter.enabled)
+
+    function connectedCount() {
+      var n = 0
+      for (var i = 0; i < btb.devices.length; i++)
+        if (btb.devices[i] && btb.devices[i].connected) n++
+      return n
+    }
+
+    readonly property string smartIcon: {
+      if (!btb.enabled) return "󰂲"
+      if (btb.connectedCount() > 0) return "󰂱"
+      return "󰂯"
+    }
+
+    text: btb.smartIcon
+    tooltip: btb.enabled
+      ? ("Bluetooth · " + (btb.connectedCount() > 0
+        ? btb.connectedCount() + " connected"
+        : "On"))
+      : "Bluetooth · Off"
+    onClicked: root.activateWidget("omarchy.bluetooth")
+  }
+
+  // Network tile mirroring the menu-bar icon: signal strength on Wi-Fi,
+  // wired, or disconnected — all live off the NetworkManager service.
+  component SmartNetworkButton: FloatButton {
+    id: nb
+
+    readonly property var devices: Networking.devices ? Networking.devices.values : []
+    function findDevice(type) {
+      var fallback = null
+      for (var i = 0; i < nb.devices.length; i++) {
+        var d = nb.devices[i]
+        if (!d || d.type !== type) continue
+        if (d.connected) return d
+        if (!fallback) fallback = d
       }
+      return fallback
     }
+    readonly property var wifiDevice: nb.findDevice(DeviceType.Wifi)
+    readonly property var wifiNetworks: nb.wifiDevice && nb.wifiDevice.networks
+      ? nb.wifiDevice.networks.values : []
+    function connectedWifi() {
+      for (var i = 0; i < nb.wifiNetworks.length; i++)
+        if (nb.wifiNetworks[i] && nb.wifiNetworks[i].connected) return nb.wifiNetworks[i]
+      return null
+    }
+    readonly property var wiredDevice: nb.findDevice(DeviceType.Wired)
+
+    readonly property string smartKind: {
+      if (nb.wiredDevice && nb.wiredDevice.connected) return "ethernet"
+      if (nb.connectedWifi()) return "wifi"
+      return "disconnected"
+    }
+    readonly property int smartSignal: nb.connectedWifi()
+      ? Math.round((nb.connectedWifi().signalStrength || 0) * 100)
+      : -1
+
+    function wifiIconFor(strength) {
+      var icons = ["󰤯", "󰤟", "󰤢", "󰤥", "󰤨"]
+      var index = Math.max(0, Math.min(4, Math.ceil(strength / 20) - 1))
+      return icons[index]
+    }
+    readonly property string smartIcon: {
+      if (nb.smartKind === "wifi") return nb.wifiIconFor(nb.smartSignal)
+      if (nb.smartKind === "ethernet") return "󰈀"
+      return "󰤮"
+    }
+
+    text: nb.smartIcon
+    tooltip: nb.smartKind === "wifi"
+      ? "Wi-Fi · " + (nb.smartSignal >= 0 ? nb.smartSignal + "%" : "connected")
+      : (nb.smartKind === "ethernet" ? "Wired connection" : "No connection")
+    onClicked: root.activateWidget("omarchy.network")
   }
 
   component FloatButton: Item {
@@ -1489,10 +1556,19 @@ Item {
     property string tooltip: ""
     property bool active: false
 
+    // Drag-to-reorder support (opt-in per tile).
+    property bool reorderable: false
+    property string reorderKey: ""
+    signal dragRequested(string key)
+    signal dragMoved(real sceneX, real sceneY)
+    signal dragDropped(real sceneX, real sceneY)
+    property bool _dragFired: false
+    property point _press: Qt.point(0, 0)
+
     readonly property bool hovered: tileArea.containsMouse
-    readonly property color hotFill: Util.alpha(tile.foreground, tile.active ? 0.28 : 0.18)
-    readonly property color activeFill: Util.alpha(tile.foreground, 0.09)
-    readonly property color displayColor: tile.active ? tile.foreground : Util.alpha(tile.foreground, 0.82)
+    readonly property color hotFill: Util.alpha(tile.foreground, tile.active ? 0.3 : 0.16)
+    readonly property color activeFill: Util.alpha(Color.accent, 0.32)
+    readonly property color displayColor: tile.active ? Color.accent : Util.alpha(tile.foreground, 0.82)
     readonly property color hoverOutline: Util.alpha(tile.foreground, 0.55)
     readonly property int tileSize: Math.max(Style.space(46), fontPixelSize + Style.space(18))
 
@@ -1500,14 +1576,20 @@ Item {
     height: tileSize
 
     Rectangle {
-      id: tileBg
       anchors.fill: parent
       radius: root.cornerRadius > 0 ? Math.max(2, root.cornerRadius / 2) : Style.space(6)
-      color: tileArea.containsMouse ? tile.hotFill : (tile.active ? tile.activeFill : "transparent")
-      border.width: tileArea.containsMouse ? Math.max(1, Style.space(1)) : 0
-      border.color: tile.hoverOutline
+      color: tileArea.containsMouse
+        ? tile.hotFill
+        : (tile.active ? tile.activeFill : "transparent")
+      border.width: (tileArea.containsMouse || tile.active) ? Math.max(1, Style.space(1)) : 0
+      border.color: tile.active
+        ? Util.alpha(Color.accent, 0.9)
+        : (tileArea.containsMouse ? tile.hoverOutline : "transparent")
 
       Behavior on color {
+        ColorAnimation { duration: 120; easing.type: Easing.OutCubic }
+      }
+      Behavior on border.color {
         ColorAnimation { duration: 120; easing.type: Easing.OutCubic }
       }
     }
@@ -1520,6 +1602,10 @@ Item {
       font.family: tile.fontFamily
       font.pixelSize: tile.fontPixelSize
       renderType: Text.NativeRendering
+
+      Behavior on color {
+        ColorAnimation { duration: 120; easing.type: Easing.OutCubic }
+      }
     }
 
     MouseArea {
@@ -1527,7 +1613,39 @@ Item {
       anchors.fill: parent
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
-      onClicked: tile.clicked()
+
+      onPressed: function(m) {
+        tile._press = Qt.point(m.x, m.y)
+        tile._dragFired = false
+      }
+      onPositionChanged: function(m) {
+        if (!pressed) return
+        if (!tile._dragFired && tile.reorderable && tile.reorderKey !== "") {
+          var dx = m.x - tile._press.x
+          var dy = m.y - tile._press.y
+          if (dx * dx + dy * dy >= root.dragThresholdSq) {
+            tile._dragFired = true
+            var sc = tile.mapToItem(null, m.x, m.y)
+            tile.dragRequested(tile.reorderKey)
+            tile.dragMoved(sc.x, sc.y)
+            return
+          }
+        }
+        if (tile._dragFired) {
+          var p = tile.mapToItem(null, m.x, m.y)
+          tile.dragMoved(p.x, p.y)
+        }
+      }
+      onReleased: function(m) {
+        if (tile._dragFired) {
+          tile._dragFired = false
+          var q = tile.mapToItem(null, m.x, m.y)
+          tile.dragDropped(q.x, q.y)
+          return
+        }
+        tile.clicked()
+      }
+      onCanceled: function() { tile._dragFired = false }
     }
 
     PanelToolTip {
@@ -1537,87 +1655,440 @@ Item {
     }
   }
 
-  // A grid tile mirroring one of the bar's indicator components.
-  component IndicatorTile: FloatButton {
-    id: itile
+  // A grid tile that mirrors one of the bar's live indicators. State is polled
+  // over IPC (see applyIndicatorPoll) because this plugin has no direct access
+  // to the owning services.
+  component LiveIndicator: FloatButton {
+    id: live
     required property string indicatorId
-    property bool loadActive: true
 
-    readonly property var indicator: indLoad.item
-    readonly property bool indicatorState: indicator ? indicator.active === true : false
-
-    text: indicator
-      ? (indicatorState ? String(indicator.activeText || "") : String(indicator.inactiveText || ""))
-      : root.indicatorGlyph(indicatorId)
-    active: itile.indicatorState
-    tooltip: indicator ? String(indicator.activeTooltipText || "") : indicatorId
-
-    onHoveredChanged: {
-      if (hovered && indicator && typeof indicator.refresh === "function") indicator.refresh()
-    }
-
-    onClicked: root.activateIndicator(indicatorId, indicator)
-
-    Loader {
-      id: indLoad
-      anchors.fill: parent
-      visible: false
-      active: itile.loadActive
-      source: itile.loadActive ? "file:///usr/share/omarchy/shell/plugins/bar/indicators/" + itile.indicatorId + ".qml" : ""
-      onLoaded: {
-        var it = indLoad.item
-        if (!it) return
-        var bar = root.shell ? root.shell.bar : null
-        if ("bar" in it) it.bar = bar
-        if ("moduleName" in it) it.moduleName = itile.indicatorId
-        if ("settings" in it) it.settings = ({})
-        if ("indicatorBlock" in it) it.indicatorBlock = "single"
+    readonly property bool on: {
+      switch (live.indicatorId) {
+      case "NightLight": return root.liveIndicatorStates.nightLight === true
+      case "Dnd": return root.liveIndicatorStates.dnd === true
+      case "Reminder": return Number(root.liveIndicatorStates.reminderCount) > 0
+      case "StayAwake": return root.liveIndicatorStates.stayAwake === true
+      case "ScreenRecording": return root.liveIndicatorStates.screenRecording === true
       }
-      onStatusChanged: if (status === Loader.Error) console.warn("speakercorners indicator load failed", itile.indicatorId)
+      return false
     }
+
+    function tooltipForState() {
+      if (live.indicatorId === "NightLight")
+        return live.on ? "Night Light — click to disable" : "Night Light — click to enable"
+      if (live.indicatorId === "Dnd")
+        return live.on ? "Silence Notifications — click to allow" : "Silence Notifications — click to disable"
+      if (live.indicatorId === "Reminder") {
+        var t = String(root.liveIndicatorStates.reminderTooltip || "").trim()
+        return t.length > 0 ? t : (live.on ? "Reminders due — click to show" : "Reminders — click to add")
+      }
+      if (live.indicatorId === "StayAwake")
+        return live.on ? "Stay Awake — click to allow idle" : "Stay Awake — click to enable"
+      if (live.indicatorId === "ScreenRecording")
+        return live.on ? "Stop recording" : "Screen Recording — click to record"
+      return live.indicatorId
+    }
+
+    text: root.indicatorGlyph(live.indicatorId)
+    active: live.on
+    tooltip: live.tooltipForState()
+
+    onHoveredChanged: if (hovered) root.pollIndicators()
+    onClicked: root.activateIndicator(live.indicatorId)
   }
 
-  // Picks the right tile for each floatbar grid cell.
-  component GridCell: Item {
+component GridCell: Item {
     id: gcell
     required property var cellData
 
     readonly property string kind: cellData && cellData.kind ? String(cellData.kind) : ""
     readonly property string cellId: cellData && cellData.id ? String(cellData.id) : ""
+    readonly property string cellKey: cellData && cellData.key ? String(cellData.key) : ""
+    readonly property bool dropActive: root.dragHighlightKey !== ""
+      && gcell.cellKey === root.dragHighlightKey
+      && gcell.cellKey !== root.dragGridKey
 
     width: root.buttonTileSize
     height: root.buttonTileSize
 
-    IndicatorTile {
+    // Drop-target highlight while dragging another cell over this one.
+    Rectangle {
+      z: 2
       anchors.fill: parent
-      visible: gcell.kind === "indicator"
-      loadActive: gcell.kind === "indicator"
-      indicatorId: gcell.cellId
+      visible: gcell.dropActive && gcell.cellKey !== root.dragGridKey
+      radius: root.cornerRadius
+      color: Util.alpha(Color.accent, 0.16)
+      border.width: Math.max(2, Style.space(1))
+      border.color: Util.alpha(Color.accent, 0.9)
     }
 
-    FloatButton {
+    Item {
+      id: gridTiles
       anchors.fill: parent
-      visible: gcell.kind === "widget"
-      text: root.glyphFor(gcell.cellId)
-      fontFamily: root.glyphFontFor(gcell.cellId)
-      tooltip: root.labelFor(gcell.cellId)
-      onClicked: root.activateWidget(gcell.cellId)
+
+      LiveIndicator {
+        anchors.fill: parent
+        visible: gcell.kind === "indicator"
+        indicatorId: gcell.cellId
+        reorderable: true
+        reorderKey: gcell.cellKey
+      }
+
+      SmartBatteryButton {
+        anchors.fill: parent
+        visible: gcell.kind === "widget" && gcell.cellId === "omarchy.power"
+        reorderable: true
+        reorderKey: gcell.cellKey
+      }
+
+      SmartBluetoothButton {
+        anchors.fill: parent
+        visible: gcell.kind === "widget" && gcell.cellId === "omarchy.bluetooth"
+        reorderable: true
+        reorderKey: gcell.cellKey
+      }
+
+      SmartNetworkButton {
+        anchors.fill: parent
+        visible: gcell.kind === "widget" && gcell.cellId === "omarchy.network"
+        reorderable: true
+        reorderKey: gcell.cellKey
+      }
+
+      FloatButton {
+        anchors.fill: parent
+        visible: gcell.kind === "widget"
+          && gcell.cellId !== "omarchy.power"
+          && gcell.cellId !== "omarchy.bluetooth"
+          && gcell.cellId !== "omarchy.network"
+        text: root.glyphFor(gcell.cellId)
+        fontFamily: root.glyphFontFor(gcell.cellId)
+        tooltip: root.labelFor(gcell.cellId)
+        reorderable: true
+        reorderKey: gcell.cellKey
+        onClicked: {
+          if (gcell.cellId === "omarchy.system-update") root.runSystemUpdate()
+          else root.activateWidget(gcell.cellId)
+        }
+      }
+
+      // App-launcher actions (browser, terminal, ...) run a fixed command.
+      FloatButton {
+        anchors.fill: parent
+        visible: gcell.kind === "action"
+        text: root.cellGlyph(gcell.cellData)
+        fontFamily: root.fontFamily
+        tooltip: root.cellLabel(gcell.cellData)
+        reorderable: true
+        reorderKey: gcell.cellKey
+        onClicked: {
+          var cmd = gcell.cellData && Array.isArray(gcell.cellData.command)
+            ? gcell.cellData.command
+            : []
+          if (cmd.length > 0)
+            Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "speakercorners-action"].concat(cmd))
+          root.closeFloatbar()
+        }
+      }
+
+      FloatButton {
+        anchors.fill: parent
+        visible: gcell.kind === "toggle"
+        text: "\ue900"
+        fontFamily: "omarchy"
+        tooltip: "Toggle Bar"
+        reorderable: true
+        reorderKey: gcell.cellKey
+        onClicked: root.toggleBar()
+      }
     }
 
-    FloatButton {
-      anchors.fill: parent
-      visible: gcell.kind === "shutdown"
-      text: "\uf011"
-      tooltip: "Shutdown"
-      onClicked: root.shutdownDevice()
+    Component.onCompleted: function() {
+      // Any reorderable tile inside this cell participates in grid dragging.
+      for (var i = 0; i < gridTiles.children.length; i++) {
+        var t = gridTiles.children[i]
+        if (!t || !t.reorderable || t.reorderKey === "") continue
+        t.dragRequested.connect(function() {
+          root.beginGridDrag(gcell.cellKey)
+        })
+        t.dragMoved.connect(function(x, y) {
+          root.updateGridDrag(Qt.point(x, y))
+        })
+        t.dragDropped.connect(function(x, y) {
+          root.endGridDrag(Qt.point(x, y))
+        })
+      }
+    }
+  }
+
+  component WorkspaceCard: Item {
+    id: wcard
+
+    required property var ws
+    property var shell: null
+    property var desktopEntries: []
+    property bool focused: false
+
+    signal activate(var ws)
+
+    readonly property real previewHeight: Math.round(wcard.width * 9 / 16)
+    readonly property real labelHeight: Math.max(Style.space(12), Style.font.caption + Style.space(4))
+
+    readonly property color focusedBorder: Color.accent
+    readonly property color idleBorder: "transparent"
+    readonly property color borderColor: wcard.focused ? focusedBorder : idleBorder
+    readonly property int borderWidth: Math.max(2, Style.space(2))
+
+    readonly property string label: wcard.ws ? String(wcard.ws.label || wcard.ws.id) : ""
+
+    readonly property color previewBackground: wcard.focused ? Color.foreground : Color.background
+    readonly property color previewForeground: wcard.focused ? Color.background : Color.popups.text
+    readonly property color imageTint: {
+      var tint = IconModel.fallbackIconTint(wcard.previewForeground, wcard.previewBackground)
+      return Qt.rgba(tint.r, tint.g, tint.b, tint.a)
     }
 
-    FloatButton {
-      anchors.fill: parent
-      visible: gcell.kind === "reboot"
-      text: "\uf2f1"
-      tooltip: "Reboot"
-      onClicked: root.rebootDevice()
+    readonly property int iconMaxSize: Style.space(24)
+    readonly property int iconGap: Style.space(4)
+    readonly property int iconPad: Style.space(5)
+
+    readonly property var appList: wcard.buildAppList(wcard.ws)
+    readonly property int appCount: wcard.appList.length
+
+    readonly property int iconColumns: {
+      var n = wcard.appCount
+      if (n <= 0) return 1
+      var w = Math.max(1, wcardPreview.width - wcard.iconPad * 2)
+      var h = Math.max(1, wcardPreview.height - wcard.iconPad * 2)
+      return Math.max(1, Math.ceil(Math.sqrt(n * (w / h))))
+    }
+
+    readonly property int iconSize: {
+      var n = wcard.appCount
+      if (n <= 0) return 0
+      var w = Math.max(1, wcardPreview.width - wcard.iconPad * 2)
+      var h = Math.max(1, wcardPreview.height - wcard.iconPad * 2)
+      var cols = wcard.iconColumns
+      var rows = Math.max(1, Math.ceil(n / cols))
+      var size = Math.floor(Math.min(
+        (w - (cols - 1) * wcard.iconGap) / cols,
+        (h - (rows - 1) * wcard.iconGap) / rows
+      ))
+      return Math.max(10, Math.min(wcard.iconMaxSize, size))
+    }
+
+    function buildAppList(ws) {
+      var out = []
+      var seen = {}
+      if (!ws || !ws.windows) return out
+
+      for (var i = 0; i < ws.windows.length; i++) {
+        var w = ws.windows[i]
+        if (!w) continue
+        var id = (typeof w.appId === "string") ? w.appId.trim() : ""
+        if (id.length === 0 && w.wayland && typeof w.wayland.appId === "string") {
+          id = w.wayland.appId.trim()
+        }
+
+        var key = id.toLowerCase()
+        if (seen[key]) continue
+        seen[key] = true
+
+        out.push({
+          appId: id,
+          member: {
+            title: typeof w.title === "string" ? w.title : "",
+            initialTitle: typeof w.title === "string" ? w.title : "",
+            className: id,
+            initialClass: id,
+            iconCandidates: id.length > 0 ? [id] : []
+          }
+        })
+      }
+      return out
+    }
+
+    function genericIconSource() {
+      return String(Quickshell.iconPath("application-x-executable", true) || "")
+    }
+
+    function desktopEntry(member) {
+      var entry = IconModel.matchDesktopEntry(member, wcard.desktopEntries)
+      var candidates = member && Array.isArray(member.iconCandidates)
+        ? member.iconCandidates
+        : []
+
+      if (!entry) {
+        for (var i = 0; i < candidates.length && !entry; i++) {
+          var candidate = String(candidates[i] || "").trim()
+          if (!candidate) continue
+
+          try {
+            entry = DesktopEntries.byId(candidate)
+              || DesktopEntries.byId(candidate + ".desktop")
+              || DesktopEntries.heuristicLookup(candidate)
+          } catch (error) {}
+        }
+      }
+
+      return entry
+    }
+
+    function actualIcon(source, genericSource) {
+      var value = String(source || "")
+      return value.length > 0 && value !== genericSource ? source : ""
+    }
+
+    function iconSource(member, entry) {
+      if (entry === undefined) entry = wcard.desktopEntry(member)
+      var candidates = member && Array.isArray(member.iconCandidates)
+        ? member.iconCandidates
+        : []
+      var genericSource = wcard.genericIconSource()
+
+      if (entry && entry.icon) {
+        if (wcard.shell && wcard.shell.appLibrary
+            && typeof wcard.shell.appLibrary.iconSource === "function") {
+          var libraryIcon = wcard.actualIcon(
+            wcard.shell.appLibrary.iconSource(entry.icon),
+            genericSource
+          )
+          if (libraryIcon) return libraryIcon
+        }
+
+        var entryIcon = wcard.actualIcon(Quickshell.iconPath(String(entry.icon), true), genericSource)
+        if (entryIcon) return entryIcon
+      }
+
+      for (var j = 0; j < candidates.length; j++) {
+        var classIconCandidate = String(candidates[j] || "").trim()
+        if (!classIconCandidate) continue
+        var classIcon = wcard.actualIcon(Quickshell.iconPath(classIconCandidate, true), genericSource)
+        if (classIcon) return classIcon
+      }
+
+      return ""
+    }
+
+    implicitHeight: wcard.previewHeight + wcard.labelHeight + wcard.borderWidth * 2
+    implicitWidth: wcard.width
+
+    BorderSurface {
+      id: wcardBorder
+      anchors.top: parent.top
+      anchors.horizontalCenter: parent.horizontalCenter
+      width: wcard.width
+      height: wcard.previewHeight + wcard.labelHeight + wcard.borderWidth * 2
+      radius: Style.cornerRadius
+      color: Util.alpha(Color.background, 0.6)
+      borderSpec: Border.flat(wcard.borderColor, wcard.borderWidth)
+      clip: true
+
+      Item {
+        id: wcardPreview
+        anchors.top: parent.top
+        anchors.topMargin: wcardBorder.contentTopInset
+        anchors.left: parent.left
+        anchors.leftMargin: wcardBorder.contentLeftInset
+        width: wcardBorder.width - wcardBorder.contentLeftInset - wcardBorder.contentRightInset
+        height: wcard.previewHeight
+        clip: true
+
+        Rectangle {
+          anchors.fill: parent
+          color: wcard.previewBackground
+        }
+
+        GridLayout {
+          anchors.centerIn: parent
+          columns: wcard.iconColumns
+          columnSpacing: wcard.iconGap
+          rowSpacing: wcard.iconGap
+
+          Repeater {
+            model: wcard.appList
+
+            delegate: Item {
+              id: appIcon
+              required property var modelData
+              readonly property var member: modelData.member
+              readonly property var entry: wcard.desktopEntry(member)
+              readonly property string mappedGlyph: IconModel.appGlyph(member, entry)
+              readonly property var imageSource: mappedGlyph.length === 0
+                ? wcard.iconSource(member, entry)
+                : ""
+              readonly property bool imageUnavailable: mappedGlyph.length === 0
+                && (String(imageSource).length === 0 || appImage.status === Image.Error)
+              readonly property string glyph: mappedGlyph.length > 0
+                ? mappedGlyph
+                : (imageUnavailable ? IconModel.genericAppGlyph() : "")
+              readonly property int iconPixelRatio: Math.max(1, Math.round(Screen.devicePixelRatio))
+
+              width: wcard.iconSize
+              height: wcard.iconSize
+
+              OpticalGlyph {
+                anchors.centerIn: parent
+                width: parent.width
+                height: parent.height
+                visible: appIcon.glyph.length > 0
+                text: appIcon.glyph
+                color: wcard.previewForeground
+                fontFamily: "JetBrainsMono Nerd Font"
+                fontSize: appIcon.height
+              }
+
+              Image {
+                id: appImage
+                anchors.fill: parent
+                visible: appIcon.glyph.length === 0
+                fillMode: Image.PreserveAspectFit
+                sourceSize.width: Math.max(1, Math.round(width * appIcon.iconPixelRatio))
+                sourceSize.height: Math.max(1, Math.round(height * appIcon.iconPixelRatio))
+                asynchronous: true
+                smooth: true
+                source: appIcon.imageSource
+                layer.enabled: visible
+                layer.effect: MultiEffect {
+                  colorization: 1.0
+                  colorizationColor: wcard.imageTint
+                }
+              }
+            }
+          }
+        }
+      }
+
+      RowLayout {
+        anchors.top: wcardPreview.bottom
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.topMargin: Style.space(1)
+        spacing: Style.space(4)
+
+        Text {
+          text: wcard.label
+          textFormat: Text.PlainText
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+          font.bold: wcard.focused
+          color: wcard.focused ? Color.accent : Util.alpha(Color.popups.text, 0.7)
+        }
+
+        Rectangle {
+          visible: wcard.ws && wcard.ws.urgent
+          width: Style.space(5)
+          height: Style.space(5)
+          radius: width / 2
+          color: Color.urgent
+        }
+      }
+
+      MouseArea {
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onClicked: wcard.activate(wcard.ws)
+      }
     }
   }
 }

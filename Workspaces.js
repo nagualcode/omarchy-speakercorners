@@ -1,4 +1,4 @@
-// Workspace model builder for pablopunk.workspace-overview.
+// Workspace model builder for the Speaker Corners workspace strip.
 //
 // Converts Quickshell's live Hyprland object model into plain JS objects so a
 // Repeater can render one card per workspace. Rebuilt on demand; nothing here

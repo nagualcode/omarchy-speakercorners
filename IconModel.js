@@ -1,6 +1,6 @@
-// App icon resolution for workspaces-float.
+// App icon resolution for the Speaker Corners workspace cards.
 //
-// Faithful subset of b.omahud/HudModel.js so the workspace cards show the same
+// Faithful subset of Omarchy's HUD model so the workspace cards show the same
 // app icons as the HUD: a Nerd Font glyph from Omarchy's default menu mapping,
 // falling back to a matched desktop entry image and finally to a generic glyph.
 

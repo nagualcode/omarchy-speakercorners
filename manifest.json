@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "author": "nagual",
   "license": "MIT",
-  "description": "Merged float bar (top-left), super-apps grid (bottom-left) and floating workspace switcher (bottom-right) with embedded hot-corner detection. Replaces floatbar, super-apps, workspaces-float and andreconde.quattro-corners with one lightweight plugin.",
+  "description": "Floating workspace switcher (bottom-right), float bar with embedded widgets (top-left) and hot-corner actions (including the Omarchy menu) in one masked, click-through surface.",
   "kinds": [
     "panel"
   ],
