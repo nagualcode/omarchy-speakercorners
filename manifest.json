@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "speakercorners",
+  "name": "Speaker Corners",
+  "version": "1.0.0",
+  "author": "nagual",
+  "license": "MIT",
+  "description": "Merged float bar (top-left), super-apps grid (bottom-left) and floating workspace switcher (bottom-right) with embedded hot-corner detection. Replaces floatbar, super-apps, workspaces-float and andreconde.quattro-corners with one lightweight plugin.",
+  "kinds": [
+    "panel"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "panel": "Speakercorners.qml"
+  }
+}
