@@ -27,9 +27,10 @@ of attitude per corner.
     Bluetooth (off / on / connected) — mirroring the menu bar, live.
   - **✨ Live indicators** — night light, do-not-disturb, reminders,
     stay-awake, screen recording — with accent highlighting and click-to-toggle.
-  - **🚀 Launcher actions** — 🌍 browser (`chromium`), 🖥️ terminal (`foot`),
-    📄 text editor (`text`) and 📁 file manager (`nautilus`). These four
-    commands are **hardcoded** in the plugin — see below.
+  - **🚀 Launcher actions** — 🌍 browser, 🖥️ terminal and 📁 file manager use
+    Omarchy's default-app launchers (`omarchy launch browser|terminal|nautilus`),
+    so they resolve to your system defaults via `uwsm-app`. 📄 the text editor
+    opens floating FeatherPad through Hyprland's own executor.
   - **🧲 Draggable grid** — drag any tile to reorder it; the layout is persisted
     to your `shell.json` and comes back exactly where you left it.
   - **🧘 Toggle button** — show/hide the menu bar itself.
@@ -90,16 +91,17 @@ Settings live in the `speakercorners` entry of
 
 ### Launcher actions (hardcoded)
 
-The float-bar launcher grid ships with four buttons whose commands are
-**hardcoded** in `Speakercorners.qml` (the `actionEntries` array). They are
-not configurable via `shell.json`:
+The float-bar launcher grid ships with four buttons. The browser, terminal and
+file manager go through Omarchy's default launchers (which attach each app to
+the `uwsm` Wayland session via `uwsm-app`), and the text editor is dispatched
+by Hyprland itself so FeatherPad always opens as a floating window:
 
 | Icon | Label | Command |
 | ---- | ----- | ------- |
-| 🌍 | Browser | `chromium` |
-| 🖥️ | Terminal | `foot` |
-| 📄 | Text | `text` |
-| 📁 | Folder | `nautilus` |
+| 🌍 | Browser | `omarchy launch browser` (system default browser) |
+| 🖥️ | Terminal | `omarchy launch terminal` (system default terminal) |
+| 📄 | Text | `hyprctl eval 'hl.dispatch(hl.dsp.exec_cmd("featherpad", { float = true }))'` |
+| 📁 | Folder | `omarchy launch nautilus` (system default file manager) |
 
 Edit `actionEntries` to change them.
 

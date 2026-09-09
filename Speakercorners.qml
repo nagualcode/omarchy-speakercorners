@@ -359,12 +359,15 @@ Item {
   property var buttonEntries: []
 
   // App-launcher actions shown in the grid (draggable like everything else).
-  // The commands are hardcoded here on purpose: chromium, foot, text, nautilus.
+  // Browser/terminal/folder go through Omarchy's default-app launchers (they
+  // attach the app to the uwsm Wayland session via uwsm-app — a bare binary
+  // spawn from this overlay never surfaces a window). The text editor is
+  // dispatched by Hyprland itself so it always opens as a floating window.
   readonly property var actionEntries: [
-    { id: "browser", glyph: "\uf0ac", label: "Browser", command: ["chromium"] },
-    { id: "terminal", glyph: "\uf120", label: "Terminal", command: ["foot"] },
-    { id: "text", glyph: "\uf15c", label: "Text", command: ["text"] },
-    { id: "folder", glyph: "\uf07b", label: "Folder", command: ["nautilus"] }
+    { id: "browser", glyph: "\uf0ac", label: "Browser", command: ["omarchy-launch-browser"] },
+    { id: "terminal", glyph: "\uf120", label: "Terminal", command: ["omarchy-launch-terminal"] },
+    { id: "text", glyph: "\uf15c", label: "Text", command: ["hyprctl", "eval", "hl.dispatch(hl.dsp.exec_cmd(\"featherpad\", { float = true }))"] },
+    { id: "folder", glyph: "\uf07b", label: "Folder", command: ["omarchy-launch-nautilus"] }
   ]
 
   readonly property int buttonTileSize: Math.max(Style.space(46), Style.font.iconLarge + Style.space(18))
