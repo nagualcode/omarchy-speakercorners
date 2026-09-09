@@ -27,7 +27,9 @@ of attitude per corner.
     Bluetooth (off / on / connected) — mirroring the menu bar, live.
   - **✨ Live indicators** — night light, do-not-disturb, reminders,
     stay-awake, screen recording — with accent highlighting and click-to-toggle.
-  - **🚀 Launcher actions** — a 🌍 browser and a 🖥️ terminal button, because yes.
+  - **🚀 Launcher actions** — 🌍 browser (`chromium`), 🖥️ terminal (`foot`),
+    📄 text editor (`text`) and 📁 file manager (`nautilus`). These four
+    commands are **hardcoded** in the plugin — see below.
   - **🧲 Draggable grid** — drag any tile to reorder it; the layout is persisted
     to your `shell.json` and comes back exactly where you left it.
   - **🧘 Toggle button** — show/hide the menu bar itself.
@@ -69,6 +71,8 @@ Settings live in the `speakercorners` entry of
   "floatGridOrder": [
     "action:browser",
     "action:terminal",
+    "action:text",
+    "action:folder",
     "toggle:toggle",
     "indicator:NightLight",
     "indicator:Dnd",
@@ -83,6 +87,21 @@ Settings live in the `speakercorners` entry of
   ]
 }
 ```
+
+### Launcher actions (hardcoded)
+
+The float-bar launcher grid ships with four buttons whose commands are
+**hardcoded** in `Speakercorners.qml` (the `actionEntries` array). They are
+not configurable via `shell.json`:
+
+| Icon | Label | Command |
+| ---- | ----- | ------- |
+| 🌍 | Browser | `chromium` |
+| 🖥️ | Terminal | `foot` |
+| 📄 | Text | `text` |
+| 📁 | Folder | `nautilus` |
+
+Edit `actionEntries` to change them.
 
 ### Corner actions
 

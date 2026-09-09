@@ -359,9 +359,12 @@ Item {
   property var buttonEntries: []
 
   // App-launcher actions shown in the grid (draggable like everything else).
+  // The commands are hardcoded here on purpose: chromium, foot, text, nautilus.
   readonly property var actionEntries: [
-    { id: "browser", glyph: "\uf0ac", label: "Browser", command: ["omarchy-launch-browser"] },
-    { id: "terminal", glyph: "\uf120", label: "Terminal", command: ["omarchy-launch-terminal"] }
+    { id: "browser", glyph: "\uf0ac", label: "Browser", command: ["chromium"] },
+    { id: "terminal", glyph: "\uf120", label: "Terminal", command: ["foot"] },
+    { id: "text", glyph: "\uf15c", label: "Text", command: ["text"] },
+    { id: "folder", glyph: "\uf07b", label: "Folder", command: ["nautilus"] }
   ]
 
   readonly property int buttonTileSize: Math.max(Style.space(46), Style.font.iconLarge + Style.space(18))
