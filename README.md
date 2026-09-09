@@ -28,9 +28,9 @@ of attitude per corner.
   - **✨ Live indicators** — night light, do-not-disturb, reminders,
     stay-awake, screen recording — with accent highlighting and click-to-toggle.
   - **🚀 Launcher actions** — 🌍 browser, 🖥️ terminal and 📁 file manager use
-    Omarchy's default-app launchers (`omarchy launch browser|terminal|nautilus`),
-    so they resolve to your system defaults via `uwsm-app`. 📄 the text editor
-    opens floating FeatherPad through Hyprland's own executor.
+    your system defaults via the `uwsm` session (`uwsm-app`); the browser opens
+    in **normal mode** through its `.desktop` entry (`gtk-launch`). 📄 the text
+    editor opens floating FeatherPad through Hyprland's own executor.
   - **🧲 Draggable grid** — drag any tile to reorder it; the layout is persisted
     to your `shell.json` and comes back exactly where you left it.
   - **🧘 Toggle button** — show/hide the menu bar itself.
@@ -91,14 +91,17 @@ Settings live in the `speakercorners` entry of
 
 ### Launcher actions (hardcoded)
 
-The float-bar launcher grid ships with four buttons. The browser, terminal and
-file manager go through Omarchy's default launchers (which attach each app to
-the `uwsm` Wayland session via `uwsm-app`), and the text editor is dispatched
-by Hyprland itself so FeatherPad always opens as a floating window:
+The float-bar launcher grid ships with four buttons. All of them are attached
+to the `uwsm` Wayland session via `uwsm-app` so they reliably surface a window.
+The browser is launched through its `.desktop` entry with `gtk-launch`, which
+opens the system default browser in **normal mode** (Omarchy's
+`omarchy launch browser` forces incognito, so it's skipped). The text editor
+is dispatched by Hyprland itself so FeatherPad always opens as a floating
+window:
 
 | Icon | Label | Command |
 | ---- | ----- | ------- |
-| 🌍 | Browser | `omarchy launch browser` (system default browser) |
+| 🌍 | Browser | `uwsm-app -- gtk-launch <default browser>.desktop` (normal mode) |
 | 🖥️ | Terminal | `omarchy launch terminal` (system default terminal) |
 | 📄 | Text | `hyprctl eval 'hl.dispatch(hl.dsp.exec_cmd("featherpad", { float = true }))'` |
 | 📁 | Folder | `omarchy launch nautilus` (system default file manager) |
