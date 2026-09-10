@@ -1,10 +1,10 @@
 # 🗣️ Speaker Corners
 
-> Four corners. One lightweight, fully click-through Omarchy plugin.
+> Three corners. One lightweight, fully click-through Omarchy plugin.
 > Hot corners that **speak** — and a floating command center that listens.
 
 **Speaker Corners** mashes a float bar (top-left), a floating workspace switcher
-(bottom-right) and hot-corner actions (including the Omarchy menu) into a single
+(bottom-right) and a hot-corner action ( Omarchy menu) into a single
 masked, click-through overlay. No window stack, no bloat — one surface, `~1.5 KB`
 of attitude per corner.
 
