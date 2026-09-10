@@ -16,7 +16,7 @@ of attitude per corner.
 
 ## 🎯 What it does
 
-- **🖱️ Four hot corners** — park the cursor, let a tiny dwell timer fire: open
+- **🖱️ Three hot corners** — park the cursor, let a tiny dwell timer fire: open
   the float bar, summon the Omarchy menu, toggle the workspace floating strip,
   or run your own command. Everything else stays fully click-through.
 - **🌆 Floating workspace strip (bottom-right)** — hover and wander between
