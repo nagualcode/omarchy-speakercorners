@@ -11,7 +11,7 @@ of attitude per corner.
 ![izi](https://img.shields.io/badge/omarchy-ready-blueviolet)
 ![hyprland](https://img.shields.io/badge/hyprland-native-2ea44f)
 
-![screenshot](preview.jpg)
+![preview](preview.jpg)
 ---
 
 ## 🎯 What it does
