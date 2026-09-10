@@ -11,7 +11,7 @@ of attitude per corner.
 ![izi](https://img.shields.io/badge/omarchy-ready-blueviolet)
 ![hyprland](https://img.shields.io/badge/hyprland-native-2ea44f)
 
-![screenshot](screenshot.jpg)
+![screenshot](preview.jpg)
 ---
 
 ## 🎯 What it does
@@ -40,16 +40,15 @@ of attitude per corner.
 
 ## 📦 Installation
 
-```sh
-git clone https://github.com/nagualcode/omarchy-speakercorners \
-  ~/.config/omarchy/plugins/nagualcode.speakercorners
-```
+omarchy plugin add https://github.com/nagualcode/omarchy-speakercorners.git --enable
 
-Restart the shell (or just enjoy the hot-reload):
 
 ```sh
 omarchy restart shell
 ```
+
+## Removal
+omarchy plugin remove nagualcode.speakercorners
 
 ## ⚙️ Configuration
 
