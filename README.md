@@ -11,6 +11,7 @@ of attitude per corner.
 ![izi](https://img.shields.io/badge/omarchy-ready-blueviolet)
 ![hyprland](https://img.shields.io/badge/hyprland-native-2ea44f)
 
+![screenshot](screenshot.jpg)
 ---
 
 ## 🎯 What it does
@@ -40,8 +41,8 @@ of attitude per corner.
 ## 📦 Installation
 
 ```sh
-git clone https://github.com/nagualcode/speakercorners \
-  ~/.config/omarchy/plugins/speakercorners
+git clone https://github.com/nagualcode/omarchy-speakercorners \
+  ~/.config/omarchy/plugins/nagualcode.speakercorners
 ```
 
 Restart the shell (or just enjoy the hot-reload):
@@ -57,7 +58,7 @@ Settings live in the `speakercorners` entry of
 
 ```jsonc
 {
-  "id": "speakercorners",
+  "id": "nagualcode.speakercorners",
   "enabled": true,
   "dwellMs": 139,          // how long the pointer must rest to fire (120–3000)
   "targetSize": 8,         // hot-corner hitbox, in px
