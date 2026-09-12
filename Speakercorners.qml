@@ -234,6 +234,98 @@ Item {
     root.trigger(root.actionFor(edge), root.commandFor(edge), edge)
   }
 
+  // ---- Cursor-based hot-corner detection --------------------------------
+  // The pointer position is read straight from Hyprland instead of relying
+  // on hover on a layer window. An overlay surface that sits on top in a
+  // corner (e.g. nagualcode.thetinybuttons) can therefore never swallow the
+  // trigger; corners fire regardless of layer stacking or plugin load order.
+  property var cornerInsideMs: ({ "top-left": 0, "top-right": 0, "bottom-left": 0, "bottom-right": 0 })
+  property var cornerFired: ({ "top-left": false, "top-right": false, "bottom-left": false, "bottom-right": false })
+  property bool cursorSampleWanted: false
+
+  function parseCursorPos(raw) {
+    var s = String(raw || "").trim()
+    var c = s.indexOf(",")
+    if (c < 1) return null
+    var x = parseFloat(s.substring(0, c))
+    var y = parseFloat(s.substring(c + 1))
+    if (!isFinite(x) || !isFinite(y)) return null
+    return [x, y]
+  }
+
+  function sampleCursorPos() {
+    if (cursorPosProc.running) {
+      // hyprctl still busy (spawn + socket round trip is ~50ms): park a
+      // request instead of dropping the tick, then re-issue on finish.
+      cursorSampleWanted = true
+      return
+    }
+    cursorPosProc.running = true
+  }
+
+  function onCursorPosition(x, y) {
+    if (!root.cornersEnabled) return
+    if (!panel || panel.width <= 0 || panel.height <= 0) return
+    if (x < 0 || y < 0 || x > panel.width || y > panel.height) return
+
+    var w = panel.width
+    var h = panel.height
+    var z = root.targetSize
+    var edge = ""
+    if (x >= w - z && y <= z) edge = "top-right"
+    else if (x <= z && y <= z) edge = "top-left"
+    else if (x <= z && y >= h - z) edge = "bottom-left"
+    else if (x >= w - z && y >= h - z) edge = "bottom-right"
+
+    var edges = ["top-left", "top-right", "bottom-left", "bottom-right"]
+    for (var i = 0; i < edges.length; i++) {
+      var e = edges[i]
+      if (e === edge) {
+        // Already fired for this entry: stay latched until the pointer
+        // leaves the corner, so resting in the corner fires only once.
+        if (root.cornerFired[e]) continue
+        root.cornerInsideMs[e] += cursorPollTimer.interval
+        if (root.cornerInsideMs[e] >= root.dwellMs) {
+          root.cornerInsideMs[e] = 0
+          root.cornerFired[e] = true
+          root.triggerCorner(e)
+        }
+      } else {
+        root.cornerInsideMs[e] = 0
+        root.cornerFired[e] = false
+      }
+    }
+  }
+
+  Timer {
+    id: cursorPollTimer
+    interval: 50
+    repeat: true
+    triggeredOnStart: true
+    // Corners never fire while the float bar is up (the panel's mask already
+    // swallows the whole screen then), so sampling can pause there: it is
+    // both correct and lighter on the system.
+    running: root.cornersEnabled && !root.floatbarOpened
+    onTriggered: root.sampleCursorPos()
+  }
+
+  Process {
+    id: cursorPosProc
+    command: ["hyprctl", "cursorpos"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var p = root.parseCursorPos(text)
+        if (p) root.onCursorPosition(p[0], p[1])
+        // chained sampling: go again right away if a tick arrived meanwhile
+        if (root.cursorSampleWanted) {
+          root.cursorSampleWanted = false
+          root.sampleCursorPos()
+        }
+      }
+    }
+  }
+
   // ---- Shared look tokens -------------------------------------------------
   readonly property int cornerRadius: Style.cornerRadius
   readonly property string fontFamily: Style.font.family
@@ -680,9 +772,80 @@ Item {
       "omarchy.network": "\uf1eb",
       "omarchy.audio": "\uf028",
       "omarchy.monitor": "\uf108",
-      "omarchy.power": "\uf011"
+      "omarchy.power": "\uf011",
+      "quickshell.spotify": "\uf1bc",
+      "io.github.moizibnyousaf.omawhatsapp": "\uf232"
     }
     return map[id] !== undefined ? map[id] : "\uf111"
+  }
+
+  // The generic fallback glyph above (\uf111) is only ever a placeholder: when
+  // a bar widget is an actual app (a plugin added to the menu bar), its tile
+  // should show the app's real icon instead. Identity candidates come from the
+  // widget registry metadata (displayName) plus the widget id, then the same
+  // desktop-entry matching the workspace cards use.
+  function widgetIdentityCandidates(id) {
+    var candidates = []
+    var meta = root.barWidgetRegistry ? root.barWidgetRegistry.metadataFor(String(id)) : null
+    var display = meta && meta.displayName ? String(meta.displayName) : ""
+    function add(value) {
+      var v = String(value || "").trim()
+      if (v && candidates.indexOf(v) === -1) candidates.push(v)
+    }
+    add(display)
+    add(id)
+    return candidates
+  }
+
+  // A widget's glyph, unless it is only the generic placeholder.
+  function nonGenericGlyph(id) {
+    var g = root.glyphFor(id)
+    return String(g) === "\uf111" ? "" : String(g)
+  }
+
+  function widgetDesktopEntry(id) {
+    var member = {
+      className: String(id || ""),
+      initialClass: String(id || ""),
+      iconCandidates: root.widgetIdentityCandidates(id)
+    }
+    var entry = IconModel.matchDesktopEntry(member, root.desktopEntries)
+    if (entry) return entry
+    var candidates = root.widgetIdentityCandidates(id)
+    for (var i = 0; i < candidates.length; i++) {
+      var c = String(candidates[i] || "").trim()
+      if (!c) continue
+      try {
+        entry = DesktopEntries.byId(c)
+          || DesktopEntries.byId(c + ".desktop")
+          || DesktopEntries.heuristicLookup(c)
+        if (entry) break
+      } catch (error) {}
+    }
+    return entry
+  }
+
+  function widgetImageSourceFor(id) {
+    var entry = root.widgetDesktopEntry(id)
+    var candidates = root.widgetIdentityCandidates(id)
+    var genericSource = String(Quickshell.iconPath("application-x-executable", true) || "")
+    function actual(source) {
+      var value = String(source || "")
+      return value.length > 0 && value !== genericSource ? source : ""
+    }
+    if (entry && entry.icon) {
+      if (root.appLibrary && typeof root.appLibrary.iconSource === "function") {
+        var libraryIcon = actual(root.appLibrary.iconSource(entry.icon))
+        if (libraryIcon) return libraryIcon
+      }
+      var entryIcon = actual(Quickshell.iconPath(String(entry.icon), true))
+      if (entryIcon) return entryIcon
+    }
+    for (var j = 0; j < candidates.length; j++) {
+      var classIcon = actual(Quickshell.iconPath(String(candidates[j] || ""), true))
+      if (classIcon) return classIcon
+    }
+    return ""
   }
 
   function glyphFontFor(id) {
@@ -697,7 +860,13 @@ Item {
   }
 
   function activateWidget(id) {
-    if (id) Quickshell.execDetached(["omarchy-shell", "shell", "toggle", String(id), "{}"])
+    if (!id) return
+    if (String(id) === "quickshell.spotify") {
+      Quickshell.execDetached(["omarchy-shell", "-q", "quickshell.spotify.player", "toggleBarWidget"])
+      Qt.callLater(function() { root.closeFloatbar() })
+      return
+    }
+    Quickshell.execDetached(["omarchy-shell", "shell", "toggle", String(id), "{}"])
     Qt.callLater(function() { root.closeFloatbar() })
   }
 
@@ -1036,47 +1205,6 @@ Item {
   }
 
   // ========================================================================
-  //  Component: one hot-corner recognition zone
-  // ========================================================================
-  component CornerZone: Item {
-    id: zone
-    required property string edge
-
-    readonly property bool armed: root.cornersEnabled
-    // Fired latches until the pointer leaves, so resting in the corner opens
-    // once instead of hammering the toggle on every dwell pass.
-    property bool fired: false
-
-    width: root.targetSize
-    height: root.targetSize
-    visible: root.cornersEnabled
-
-    Timer {
-      id: dwell
-      interval: root.dwellMs
-      repeat: false
-      onTriggered: {
-        root.triggerCorner(zone.edge)
-        zone.fired = true
-      }
-    }
-
-    MouseArea {
-      anchors.fill: parent
-      hoverEnabled: true
-      acceptedButtons: Qt.NoButton
-      onEntered: {
-        zone.fired = false
-        if (zone.armed) dwell.restart()
-      }
-      onExited: {
-        dwell.stop()
-        zone.fired = false
-      }
-    }
-  }
-
-  // ========================================================================
   //  The single masked window
   // ========================================================================
   PanelWindow {
@@ -1096,11 +1224,6 @@ Item {
     // swallow outside clicks), and the workspace strip keeps its clicks while
     // showing.
     mask: Region {
-      // four corner squares
-      Region { x: 0; y: 0; width: root.cornersEnabled ? root.targetSize : 0; height: root.targetSize }
-      Region { x: panel.width - root.targetSize; y: 0; width: root.cornersEnabled ? root.targetSize : 0; height: root.targetSize }
-      Region { x: 0; y: panel.height - root.targetSize; width: root.cornersEnabled ? root.targetSize : 0; height: root.targetSize }
-      Region { x: panel.width - root.targetSize; y: panel.height - root.targetSize; width: root.cornersEnabled ? root.targetSize : 0; height: root.targetSize }
       // fullscreen block while the float bar is up
       Region { x: 0; y: 0; width: root.keysWanted ? panel.width : 0; height: root.keysWanted ? panel.height : 0 }
       // workspace strip clicks (and null while it is hidden)
@@ -1285,31 +1408,10 @@ Item {
       }
     }
 
-    // ---- Hot-corner recognition zones ----
-    CornerZone {
-      z: 10
-      anchors.top: parent.top
-      anchors.left: parent.left
-      edge: "top-left"
-    }
-    CornerZone {
-      z: 10
-      anchors.top: parent.top
-      anchors.right: parent.right
-      edge: "top-right"
-    }
-    CornerZone {
-      z: 10
-      anchors.bottom: parent.bottom
-      anchors.left: parent.left
-      edge: "bottom-left"
-    }
-    CornerZone {
-      z: 10
-      anchors.bottom: parent.bottom
-      anchors.right: parent.right
-      edge: "bottom-right"
-    }
+    // ---- Hot-corner detection ----
+    // No hover MouseAreas here: the corners now fire from the pointer
+    // position read through Hyprland (see sampleCursorPos), so an overlay
+    // surface that sits on top in a corner cannot swallow the trigger.
 
     // ---- Keyboard routing (float bar only) ----
     Item {
@@ -1569,6 +1671,7 @@ Item {
     id: tile
     signal clicked
     property string text: ""
+    property string imageSource: ""
     property string fontFamily: root.fontFamily
     property int fontPixelSize: Style.font.iconLarge
     property color foreground: root.cardText
@@ -1616,6 +1719,7 @@ Item {
     Text {
       anchors.centerIn: parent
       textFormat: Text.PlainText
+      visible: String(tile.imageSource || "").length === 0
       text: tile.text
       color: tile.displayColor
       font.family: tile.fontFamily
@@ -1624,6 +1728,28 @@ Item {
 
       Behavior on color {
         ColorAnimation { duration: 120; easing.type: Easing.OutCubic }
+      }
+    }
+
+    // Real app icon (resolved from a desktop entry) shown whenever the tile's
+    // text is just a generic placeholder. Tinted to the tile colour so it
+    // matches the surrounding glyphs.
+    Image {
+      id: tileIcon
+      anchors.centerIn: parent
+      visible: String(tile.imageSource || "").length > 0
+      width: Math.max(Style.space(18), Math.round(tile.tileSize * 0.52))
+      height: Math.max(Style.space(18), Math.round(tile.tileSize * 0.52))
+      fillMode: Image.PreserveAspectFit
+      asynchronous: true
+      smooth: true
+      source: tile.imageSource
+      sourceSize.width: Math.max(1, Math.round(width * Math.max(1, Math.round(Screen.devicePixelRatio))))
+      sourceSize.height: Math.max(1, Math.round(height * Math.max(1, Math.round(Screen.devicePixelRatio))))
+      layer.enabled: visible
+      layer.effect: MultiEffect {
+        colorization: 1.0
+        colorizationColor: tile.displayColor
       }
     }
 
@@ -1727,6 +1853,15 @@ component GridCell: Item {
       && gcell.cellKey === root.dragHighlightKey
       && gcell.cellKey !== root.dragGridKey
 
+    // Widgets (things added to the menu bar) show their mapped glyph; when the
+    // mapping is only the generic placeholder, resolve the app's real icon.
+    readonly property string widgetMappedGlyph: gcell.kind === "widget"
+      ? root.nonGenericGlyph(gcell.cellId)
+      : ""
+    readonly property string widgetImageSource: gcell.kind === "widget" && widgetMappedGlyph.length === 0
+      ? root.widgetImageSourceFor(gcell.cellId)
+      : ""
+
     width: root.buttonTileSize
     height: root.buttonTileSize
 
@@ -1780,7 +1915,10 @@ component GridCell: Item {
           && gcell.cellId !== "omarchy.power"
           && gcell.cellId !== "omarchy.bluetooth"
           && gcell.cellId !== "omarchy.network"
-        text: root.glyphFor(gcell.cellId)
+        text: gcell.widgetMappedGlyph.length > 0
+          ? gcell.widgetMappedGlyph
+          : (String(gcell.widgetImageSource).length > 0 ? "" : root.glyphFor(gcell.cellId))
+        imageSource: gcell.widgetImageSource
         fontFamily: root.glyphFontFor(gcell.cellId)
         tooltip: root.labelFor(gcell.cellId)
         reorderable: true
