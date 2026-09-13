@@ -18,7 +18,7 @@ import "IconModel.js" as IconModel
 // One always-mapped fullscreen Overlay window holds:
 //   * embedded hot-corner recognition (top-left / top-right / bottom-left /
 //     bottom-right / bottom-center)
-//   * the float bar card          (top-left, no backdrop)
+//   * the icon panel card       (bottom-left, no backdrop)
 //   * the floating workspace switcher strip (bottom-center, centered)
 // plus keyboard focus for the float bar. The window's `mask` only admits input
 // where something interactive lives, so the desktop stays fully click-through
@@ -35,9 +35,9 @@ import "IconModel.js" as IconModel
 //   "plugins": [
 //     { "id": "speakercorners",
 //       "dwellMs": 139, "targetSize": 8,
-//       "topLeftAction": "command",  "topLeftCommand": "omarchy-shell floatbar toggle",
+//       "topLeftAction": "command",  "topLeftCommand": "omarchy menu",
 //       "topRightAction": "none",    "topRightCommand": "",
-//       "bottomLeftAction": "command","bottomLeftCommand": "omarchy menu",
+//       "bottomLeftAction": "command","bottomLeftCommand": "omarchy-shell floatbar toggle",
 //       "bottomRightAction": "command","bottomRightCommand": "omarchy-shell io.github.moizibnyousaf.omawhatsapp toggleDropdown '{}'",
 //       "bottomCenterAction": "command","bottomCenterCommand": "omarchy-shell workspace-overview toggle" }
 //   ]
@@ -90,9 +90,9 @@ Item {
   }
 
   function commandFor(edge) {
-    if (edge === "top-left") return String(setting("topLeftCommand", "omarchy-shell floatbar toggle"))
+    if (edge === "top-left") return String(setting("topLeftCommand", "omarchy menu"))
     if (edge === "top-right") return String(setting("topRightCommand", ""))
-    if (edge === "bottom-left") return String(setting("bottomLeftCommand", "omarchy menu"))
+    if (edge === "bottom-left") return String(setting("bottomLeftCommand", "omarchy-shell floatbar toggle"))
     if (edge === "bottom-right") return String(setting("bottomRightCommand", "omarchy-shell workspace-overview toggle"))
     if (edge === "bottom-center") return String(setting("bottomCenterCommand", "omarchy-shell workspace-overview toggle"))
     return ""
@@ -299,6 +299,10 @@ Item {
         if (root.cornerInsideMs[e] >= root.dwellMs) {
           root.cornerInsideMs[e] = 0
           root.cornerFired[e] = true
+          // While the icon panel is up its fullscreen mask owns the pointer;
+          // only the panel's own corner may fire then (the toggle-off). The
+          // other corners stay latched until the pointer leaves.
+          if (root.floatbarOpened && e !== "bottom-left") continue
           root.triggerCorner(e)
         }
       } else {
@@ -313,10 +317,11 @@ Item {
     interval: 50
     repeat: true
     triggeredOnStart: true
-    // Corners never fire while the float bar is up (the panel's mask already
-    // swallows the whole screen then), so sampling can pause there: it is
-    // both correct and lighter on the system.
-    running: root.cornersEnabled && !root.floatbarOpened
+    // Sampling keeps running while the icon panel is up so its hot-corner
+    // trigger works as a toggle: re-dwelling the panel's own corner closes it
+    // again. While the panel is open only that corner is honoured (see
+    // onCursorPosition).
+    running: root.cornersEnabled
     onTriggered: root.sampleCursorPos()
   }
 
@@ -355,7 +360,7 @@ Item {
   }
 
   // ========================================================================
-  //  FLOATING BAR (top-left)
+  //  ICON PANEL (bottom-left)
   // ========================================================================
   readonly property color cardColor: "#000000"
   readonly property color cardBorder: Color.accent
@@ -1170,7 +1175,7 @@ Item {
   //  Shell panel contract + legacy IPC targets
   // ========================================================================
   function open(payloadJson) {
-    // Generic summon defaults to the top-left (floatbar) surface.
+    // Generic summon defaults to the bottom-left (icon panel) surface.
     root.openFloatbar(payloadJson)
     return "ok"
   }
@@ -1252,7 +1257,7 @@ Item {
       onClicked: root.closeFloatbar()
     }
 
-    // ---- Float bar card (top-left) ----
+    // ---- Float bar card (bottom-left) ----
     BorderSurface {
       z: 2
       visible: root.floatbarOpened
@@ -1272,7 +1277,7 @@ Item {
       implicitHeight: root.computedContentHeight + contentTopInset + contentBottomInset
 
       x: root.cornerMargin
-      y: root.cornerMargin
+      y: panel.height - height - root.cornerMargin
 
       // Swallow clicks on the card so they don't reach the backdrop catcher.
       MouseArea { anchors.fill: parent; onClicked: { } }

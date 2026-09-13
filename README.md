@@ -3,7 +3,7 @@
 > Three corners. One lightweight, fully click-through Omarchy plugin.
 > Hot corners that **speak** — and a floating command center that listens.
 
-**Speaker Corners** mashes a float bar (top-left), a floating workspace switcher
+**Speaker Corners** mashes an icon panel (bottom-left), a floating workspace switcher
 (bottom-center) and hot-corner actions (Omarchy menu, app dropdowns) into a
 single masked, click-through overlay. No window stack, no bloat — one surface,
 `~1.5 KB` of attitude per corner.
@@ -16,15 +16,15 @@ single masked, click-through overlay. No window stack, no bloat — one surface,
 
 ## 🎯 What it does
 
-- **🖱️ Five hot corners** — park the cursor, let a tiny dwell timer fire: open
-  the float bar, summon the Omarchy menu, toggle the workspace floating strip,
+- **🖱️ Five hot corners** — park the cursor, let a tiny dwell timer fire: summon
+  the Omarchy menu, toggle the icon panel, toggle the workspace floating strip,
   toggle the WhatsApp dropdown, or run your own command. Everything else stays
   fully click-through.
 - **🌆 Floating workspace strip (bottom-center)** — one quarter of the bottom
   edge's width, centered; hover and wander between workspaces. Each card shows
   a live preview with app icons resolved straight from your desktop entries, an
   urgent dot, and a `+` to mint a new workspace.
-- **🧊 Float bar (top-left)** — a compact card nerd-friendly enough to live on:
+- **🧊 Icon panel (bottom-left)** — a compact card nerd-friendly enough to live on:
   - **🕐 A clock** that opens the real menu-bar calendar when clicked.
   - **🔋 Smart icons** — battery (with plug/AC state), Wi-Fi (signal strength),
     Bluetooth (off / on / connected) — mirroring the menu bar, live.
@@ -66,9 +66,9 @@ Settings live in the `speakercorners` entry of
   "clockFormat": "dddd HH:mm",
   "cardWidth": "auto",     // or a fixed px width
   "topLeftAction": "command",
-  "topLeftCommand": "omarchy-shell floatbar toggle",
+  "topLeftCommand": "omarchy menu",
   "bottomLeftAction": "command",
-  "bottomLeftCommand": "omarchy menu",
+  "bottomLeftCommand": "omarchy-shell floatbar toggle",
   "bottomRightAction": "command",
   "bottomRightCommand": "omarchy-shell io.github.moizibnyousaf.omawhatsapp toggleDropdown '{}'",
   "bottomCenterAction": "command",
@@ -116,9 +116,9 @@ Edit `actionEntries` to change them.
 
 | Key                 | values                                              |
 | ------------------- | --------------------------------------------------- |
-| `topLeftAction`     | `command` / `none` — float bar toggle by default    |
+| `topLeftAction`     | `command` / `none` — Omarchy menu toggle by default     |
 | `topRightAction`    | `command` / `none` — nothing by default             |
-| `bottomLeftAction`  | `command` / `none` — Omarchy menu by default        |
+| `bottomLeftAction`  | `command` / `none` — icon panel toggle by default      |
 | `bottomRightAction` | `command` / `none` — WhatsApp dropdown by default   |
 | `bottomCenterAction`| `command` / `none` — workspace strip by default     |
 

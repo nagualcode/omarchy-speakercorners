@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "author": "nagual",
   "license": "MIT",
-  "description": "Floating workspace switcher (bottom-right), float bar with embedded widgets (top-left) and hot-corner actions (including the Omarchy menu) in one masked, click-through surface.",
+  "description": "Floating workspace switcher (bottom-center), icon panel with embedded widgets (bottom-left) and hot-corner actions (including the Omarchy menu) in one masked, click-through surface.",
   "kinds": [
     "panel"
   ],
