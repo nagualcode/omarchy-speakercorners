@@ -16,15 +16,20 @@ import "IconModel.js" as IconModel
 // Speaker Corners — everything the corner of the screen does, in one plugin.
 //
 // One always-mapped fullscreen Overlay window holds:
-//   * embedded hot-corner recognition (top-left / bottom-left / bottom-right)
+//   * embedded hot-corner recognition (top-left / top-right / bottom-left /
+//     bottom-right / bottom-center)
 //   * the float bar card          (top-left, no backdrop)
-//   * the floating workspace switcher strip (bottom-right)
+//   * the floating workspace switcher strip (bottom-center, centered)
 // plus keyboard focus for the float bar. The window's `mask` only admits input
 // where something interactive lives, so the desktop stays fully click-through
 // everywhere else.
 //
 // Previously these were separate plugins (floatbar, workspaces-float) plus the
 // quattro-corners service. This single masked surface replaces them all.
+//
+// The bottom-center hot-corner is a region one quarter of the bottom edge's
+// width, centered on the midpoint of that edge; it defaults to the workspace
+// switcher strip.
 //
 // Configuration lives in shell.json in the plugin's own entry:
 //   "plugins": [
@@ -33,7 +38,8 @@ import "IconModel.js" as IconModel
 //       "topLeftAction": "command",  "topLeftCommand": "omarchy-shell floatbar toggle",
 //       "topRightAction": "none",    "topRightCommand": "",
 //       "bottomLeftAction": "command","bottomLeftCommand": "omarchy menu",
-//       "bottomRightAction": "command","bottomRightCommand": "omarchy-shell workspace-overview toggle" }
+//       "bottomRightAction": "command","bottomRightCommand": "omarchy-shell io.github.moizibnyousaf.omawhatsapp toggleDropdown '{}'",
+//       "bottomCenterAction": "command","bottomCenterCommand": "omarchy-shell workspace-overview toggle" }
 //   ]
 Item {
   id: root
@@ -79,6 +85,7 @@ Item {
     if (edge === "top-right") return String(setting("topRightAction", "none"))
     if (edge === "bottom-left") return String(setting("bottomLeftAction", "command"))
     if (edge === "bottom-right") return String(setting("bottomRightAction", "command"))
+    if (edge === "bottom-center") return String(setting("bottomCenterAction", "command"))
     return "none"
   }
 
@@ -87,6 +94,7 @@ Item {
     if (edge === "top-right") return String(setting("topRightCommand", ""))
     if (edge === "bottom-left") return String(setting("bottomLeftCommand", "omarchy menu"))
     if (edge === "bottom-right") return String(setting("bottomRightCommand", "omarchy-shell workspace-overview toggle"))
+    if (edge === "bottom-center") return String(setting("bottomCenterCommand", "omarchy-shell workspace-overview toggle"))
     return ""
   }
 
@@ -239,8 +247,8 @@ Item {
   // on hover on a layer window. An overlay surface that sits on top in a
   // corner (e.g. nagualcode.thetinybuttons) can therefore never swallow the
   // trigger; corners fire regardless of layer stacking or plugin load order.
-  property var cornerInsideMs: ({ "top-left": 0, "top-right": 0, "bottom-left": 0, "bottom-right": 0 })
-  property var cornerFired: ({ "top-left": false, "top-right": false, "bottom-left": false, "bottom-right": false })
+  property var cornerInsideMs: ({ "top-left": 0, "top-right": 0, "bottom-left": 0, "bottom-right": 0, "bottom-center": 0 })
+  property var cornerFired: ({ "top-left": false, "top-right": false, "bottom-left": false, "bottom-right": false, "bottom-center": false })
   property bool cursorSampleWanted: false
 
   function parseCursorPos(raw) {
@@ -276,8 +284,11 @@ Item {
     else if (x <= z && y <= z) edge = "top-left"
     else if (x <= z && y >= h - z) edge = "bottom-left"
     else if (x >= w - z && y >= h - z) edge = "bottom-right"
+    // bottom-center: one quarter of the bottom edge's width, centered on its
+    // midpoint (same targetSize tall as the corners).
+    else if (Math.abs(x - w / 2) <= w / 8 && y >= h - z) edge = "bottom-center"
 
-    var edges = ["top-left", "top-right", "bottom-left", "bottom-right"]
+    var edges = ["top-left", "top-right", "bottom-left", "bottom-right", "bottom-center"]
     for (var i = 0; i < edges.length; i++) {
       var e = edges[i]
       if (e === edge) {

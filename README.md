@@ -4,9 +4,9 @@
 > Hot corners that **speak** — and a floating command center that listens.
 
 **Speaker Corners** mashes a float bar (top-left), a floating workspace switcher
-(bottom-right) and a hot-corner action ( Omarchy menu) into a single
-masked, click-through overlay. No window stack, no bloat — one surface, `~1.5 KB`
-of attitude per corner.
+(bottom-center) and hot-corner actions (Omarchy menu, app dropdowns) into a
+single masked, click-through overlay. No window stack, no bloat — one surface,
+`~1.5 KB` of attitude per corner.
 
 ![izi](https://img.shields.io/badge/omarchy-ready-blueviolet)
 ![hyprland](https://img.shields.io/badge/hyprland-native-2ea44f)
@@ -16,12 +16,14 @@ of attitude per corner.
 
 ## 🎯 What it does
 
-- **🖱️ Three hot corners** — park the cursor, let a tiny dwell timer fire: open
+- **🖱️ Five hot corners** — park the cursor, let a tiny dwell timer fire: open
   the float bar, summon the Omarchy menu, toggle the workspace floating strip,
-  or run your own command. Everything else stays fully click-through.
-- **🌆 Floating workspace strip (bottom-right)** — hover and wander between
-  workspaces. Each card shows a live preview with app icons resolved straight
-  from your desktop entries, an urgent dot, and a `+` to mint a new workspace.
+  toggle the WhatsApp dropdown, or run your own command. Everything else stays
+  fully click-through.
+- **🌆 Floating workspace strip (bottom-center)** — one quarter of the bottom
+  edge's width, centered; hover and wander between workspaces. Each card shows
+  a live preview with app icons resolved straight from your desktop entries, an
+  urgent dot, and a `+` to mint a new workspace.
 - **🧊 Float bar (top-left)** — a compact card nerd-friendly enough to live on:
   - **🕐 A clock** that opens the real menu-bar calendar when clicked.
   - **🔋 Smart icons** — battery (with plug/AC state), Wi-Fi (signal strength),
@@ -68,7 +70,9 @@ Settings live in the `speakercorners` entry of
   "bottomLeftAction": "command",
   "bottomLeftCommand": "omarchy menu",
   "bottomRightAction": "command",
-  "bottomRightCommand": "omarchy-shell workspace-overview toggle",
+  "bottomRightCommand": "omarchy-shell io.github.moizibnyousaf.omawhatsapp toggleDropdown '{}'",
+  "bottomCenterAction": "command",
+  "bottomCenterCommand": "omarchy-shell workspace-overview toggle",
   "floatGridOrder": [
     "action:browser",
     "action:terminal",
@@ -115,7 +119,8 @@ Edit `actionEntries` to change them.
 | `topLeftAction`     | `command` / `none` — float bar toggle by default    |
 | `topRightAction`    | `command` / `none` — nothing by default             |
 | `bottomLeftAction`  | `command` / `none` — Omarchy menu by default        |
-| `bottomRightAction` | `command` / `none` — workspace strip by default     |
+| `bottomRightAction` | `command` / `none` — WhatsApp dropdown by default   |
+| `bottomCenterAction`| `command` / `none` — workspace strip by default     |
 
 Each `*Command` runs via `bash -lc`, so `omarchy-*` helpers and your shell
 niceties are all fair game.
