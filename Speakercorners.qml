@@ -36,8 +36,8 @@ import "IconModel.js" as IconModel
 //     { "id": "speakercorners",
 //       "dwellMs": 139, "targetSize": 8,
 //       "topLeftAction": "command",  "topLeftCommand": "omarchy menu",
-//       "topRightAction": "none",    "topRightCommand": "",
-//       "bottomLeftAction": "command","bottomLeftCommand": "omarchy-shell floatbar toggle",
+//       "topRightAction": "toggle-window-modes",  "topRightCommand": "",
+//       "bottomLeftAction": "toggle-hide-chrome",  "bottomLeftCommand": "",
 //       "bottomRightAction": "command","bottomRightCommand": "omarchy-shell io.github.moizibnyousaf.omawhatsapp toggleDropdown '{}'",
 //       "bottomCenterAction": "command","bottomCenterCommand": "omarchy-shell workspace-overview toggle" }
 //   ]
@@ -54,6 +54,10 @@ Item {
   // ---- Per-surface open state -------------------------------------------
   property bool floatbarOpened: false
   property bool workspacesOpened: false
+  // Keep the surfaces alive during the closing slide so the descent is
+  // visible; cleared by the slide-out timers once the play-out ends.
+  property bool fbSliding: false
+  property bool wsSliding: false
 
   readonly property bool anyOpen: root.floatbarOpened || root.workspacesOpened
   // The shell's isPluginOpen() reads `opened` off the loaded item; keep it in
@@ -72,6 +76,33 @@ Item {
   property int targetSize: 8
   property bool cornersEnabled: true
 
+  // Slide animation for the inline panels (icon panel + workspace strip).
+  // Users can disable it via the "animations" setting in shell.json; the slide
+  // drops to 0ms when off so panels pop in/out instantly.
+  property bool animationsEnabled: true
+  property int panelAnimMs: 120
+  readonly property int effectivePanelAnimMs: root.animationsEnabled ? root.panelAnimMs : 0
+
+  // Workspaces strip look & behaviour, persisted in the plugin's shell.json
+  // entry and adjustable from the right-click configuration popup.
+  property real wsScale: 1.0
+  property real wsOpacity: 0.97
+  property bool wsAutoHide: true
+  property bool wsToggleEnabled: true
+  // Vertically centered spacers around the strip: this gap is kept equal
+  // between the strip and the screen bottom and between the strip and the
+  // windows (the bottom reserved area is stripHeight + 2*gap). Default is the
+  // previous bottom margin reduced by 5% (22 -> ~21px), tuned from the
+  // settings popup slider.
+  readonly property int wsStripGapDefault: Math.max(2, Math.round(Style.space(22) * 0.95))
+  property int wsStripGap: wsStripGapDefault
+  // Disabling the bottom-center toggle pins the strip on screen: it no longer
+  // waits for a mouse trigger to appear and no longer auto-hides.
+  readonly property bool wsAlwaysVisible: !root.wsToggleEnabled
+  onWsToggleEnabledChanged: {
+    if (root.wsAlwaysVisible && root.configLoaded) root.showWorkspaces()
+  }
+
   // Persisted order of the float-bar grid cells (drag to reorder).
   property var gridOrder: []
 
@@ -82,18 +113,18 @@ Item {
 
   function actionFor(edge) {
     if (edge === "top-left") return String(setting("topLeftAction", "command"))
-    if (edge === "top-right") return String(setting("topRightAction", "none"))
-    if (edge === "bottom-left") return String(setting("bottomLeftAction", "command"))
+    if (edge === "top-right") return String(setting("topRightAction", "toggle-window-modes"))
+    if (edge === "bottom-left") return String(setting("bottomLeftAction", "toggle-hide-chrome"))
     if (edge === "bottom-right") return String(setting("bottomRightAction", "command"))
     if (edge === "bottom-center") return String(setting("bottomCenterAction", "command"))
     return "none"
   }
 
   function commandFor(edge) {
-    if (edge === "top-left") return String(setting("topLeftCommand", "omarchy menu"))
-    if (edge === "top-right") return String(setting("topRightCommand", ""))
-    if (edge === "bottom-left") return String(setting("bottomLeftCommand", "omarchy-shell floatbar toggle"))
-    if (edge === "bottom-right") return String(setting("bottomRightCommand", "omarchy-shell workspace-overview toggle"))
+    if (edge === "top-left") return String(setting("topLeftCommand", ""))
+    if (edge === "top-right") return String(setting("topRightCommand", "hyprctl gloview"))
+    if (edge === "bottom-left") return String(setting("bottomLeftCommand", ""))
+    if (edge === "bottom-right") return String(setting("bottomRightCommand", ""))
     if (edge === "bottom-center") return String(setting("bottomCenterCommand", "omarchy-shell workspace-overview toggle"))
     return ""
   }
@@ -114,6 +145,13 @@ Item {
     root.dwellMs = Math.max(120, Math.min(3000, Number(setting("dwellMs", 139) || 139)))
     root.targetSize = Math.max(4, Math.min(120, Number(setting("targetSize", 8) || 8)))
     root.cornersEnabled = setting("enabled", true) !== false
+    root.animationsEnabled = setting("animations", true) !== false
+    root.wsScale = Math.max(0.5, Math.min(2.0, Number(setting("wsScale", 1.0) || 1.0)))
+    root.wsOpacity = Math.max(0.1, Math.min(1.0, Number(setting("wsOpacity", 0.97) || 0.97)))
+    root.wsAutoHide = setting("wsAutoHide", true) !== false
+    root.wsToggleEnabled = setting("wsToggleEnabled", true) !== false
+    root.wsCardGap = Math.max(0, Math.min(Style.space(64), Number(setting("wsGap", Style.space(10)) || Style.space(10))))
+    root.wsStripGap = Math.max(0, Math.min(Style.space(64), Number(setting("wsStripGap", root.wsStripGapDefault) || root.wsStripGapDefault)))
     root.configLoaded = true
   }
 
@@ -230,6 +268,12 @@ Item {
     case "command":
       root.run(command)
       break
+    case "toggle-window-modes":
+      root.toggleAllWindowModes()
+      break
+    case "toggle-hide-chrome":
+      root.toggleChromeHidden()
+      break
     case "none":
     default:
       break
@@ -240,6 +284,94 @@ Item {
     root.readConfig()
     if (!root.cornersEnabled) return
     root.trigger(root.actionFor(edge), root.commandFor(edge), edge)
+  }
+
+  // ---- bottom-left hot corner: hide the strip and the menu bar together ----
+  // Re-dwelling the corner toggles everything back. The menu bar's hidden
+  // state (flag file at ~/.local/state/omarchy/toggles/bar-off) is remembered
+  // so restoring never unhides a bar the user had already hidden. The strip's
+  // own auto-hide setting still prevails: a transient show (workspace switch)
+  // or a restore lets the auto-hide timer re-hide it instead of fighting it.
+  property bool chromeHidden: false
+  property bool chromeSavedBarOff: false
+  property bool barOff: false
+  Process {
+    id: barOffProbe
+    running: true
+    command: ["bash", "-c", "[[ -f \"$HOME/.local/state/omarchy/toggles/bar-off\" ]] && echo yes || echo no"]
+    stdout: SplitParser { onRead: function(line) { root.barOff = String(line).trim() === "yes" } }
+  }
+  FileView {
+    path: Quickshell.env("HOME") + "/.local/state/omarchy/toggles"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: barOffProbe.running = true
+  }
+  function toggleChromeHidden() {
+    root.chromeHidden = !root.chromeHidden
+    if (root.chromeHidden) root.hideChrome()
+    else root.restoreChrome()
+  }
+  function hideChrome() {
+    root.chromeSavedBarOff = root.barOff
+    chromeFlashTimer.stop()
+    root.hideWorkspaces()
+    if (!root.barOff) Quickshell.execDetached(["omarchy-toggle-bar", "on"])
+  }
+  function restoreChrome() {
+    if (!root.chromeSavedBarOff) Quickshell.execDetached(["omarchy-toggle-bar", "off"])
+    root.showWorkspaces()
+  }
+  // Brief strip appearance on a workspace switch while everything is hidden.
+  function briefWorkspaceFlash() {
+    root.showWorkspaces()
+    if (!root.wsAutoHide) chromeFlashTimer.start()
+  }
+  Timer {
+    id: chromeFlashTimer
+    interval: 1400
+    onTriggered: { if (root.chromeHidden) root.hideWorkspaces() }
+  }
+
+  // Toggle every window on the active workspace between tiling and floating.
+  // The top-right hot corner calls this: the first dwell tiles everything
+  // (windows already tiled stay tiled), the next dwell floats everything.
+  // hl.dsp.window.float set/unset are toggles in this build, so each window
+  // is only dispatched to when its current state differs from the target.
+  property bool allWindowsTiled: false
+  property var allTargetWsId: null
+  function toggleAllWindowModes() {
+    root.allWindowsTiled = !root.allWindowsTiled
+    root.allTargetWsId = root.focusedWorkspaceId
+    wsClientsProc.running = true
+  }
+  Process {
+    id: wsClientsProc
+    command: ["hyprctl", "-j", "clients"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.applyAllWindowModes(text)
+    }
+  }
+  function applyAllWindowModes(text) {
+    var wsId = Number(root.allTargetWsId)
+    root.allTargetWsId = null
+    if (!isFinite(wsId)) return
+    var list = []
+    try { list = JSON.parse(text || "[]") } catch (e) { return }
+    if (!Array.isArray(list)) return
+    var wantFloating = !root.allWindowsTiled
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i]
+      if (!c || c.mapped === false || c.hidden === true) continue
+      if (!c.workspace || Number(c.workspace.id) !== wsId) continue
+      var addr = String(c.address || "")
+      if (!/^0x[0-9a-fA-F]+$/.test(addr)) continue
+      if (c.floating === true && wantFloating) continue
+      if (c.floating === false && !wantFloating) continue
+      var expr = 'hl.dsp.window.float({ action = "toggle", window = "address:' + addr + '" })'
+      Quickshell.execDetached(["hyprctl", "dispatch", expr])
+    }
   }
 
   // ---- Cursor-based hot-corner detection --------------------------------
@@ -287,6 +419,9 @@ Item {
     // bottom-center: one quarter of the bottom edge's width, centered on its
     // midpoint (same targetSize tall as the corners).
     else if (Math.abs(x - w / 2) <= w / 8 && y >= h - z) edge = "bottom-center"
+    // Disabling the bottom-center toggle makes that hot-corner inert, so the
+    // strip can never disappear through it.
+    if (edge === "bottom-center" && !root.wsToggleEnabled) edge = ""
 
     var edges = ["top-left", "top-right", "bottom-left", "bottom-right", "bottom-center"]
     for (var i = 0; i < edges.length; i++) {
@@ -610,13 +745,13 @@ Item {
     if (cell.kind === "indicator") return root.indicatorGlyph(cell.id)
     if (cell.kind === "widget") return root.glyphFor(cell.id)
     if (cell.kind === "action") return String(cell.glyph || "\uf111")
-    if (cell.kind === "toggle") return "\ue900"
+    if (cell.kind === "toggle") return "\u22ee"
     return "\uf111"
   }
 
   function cellGlyphFont(cell) {
     if (!cell) return root.fontFamily
-    if (cell.kind === "toggle") return "omarchy"
+    if (cell.kind === "toggle") return root.fontFamily
     if (cell.kind === "widget") return root.glyphFontFor(cell.id)
     return root.fontFamily
   }
@@ -768,6 +903,82 @@ Item {
       }
     }
     if (!found) cfg.plugins.push({ id: "speakercorners", floatGridOrder: order })
+    return cfg
+  }
+
+  // ---- Workspaces configuration popup ------------------------------------
+  // Opened by right-clicking the strip background. The sliders apply live and
+  // commit to shell.json on release (same write path as grid reordering).
+  property bool wsConfigOpen: false
+
+  function toggleWsConfig() { root.wsConfigOpen ? root.closeWsConfig() : root.openWsConfig() }
+
+  function openWsConfig() {
+    root.wsConfigOpen = true
+    wsConfigPeel.restart()
+  }
+
+  function closeWsConfig() {
+    if (!root.wsConfigOpen) return
+    root.wsConfigOpen = false
+    wsConfigPeel.stop()
+    root.persistWorkspaceSettings()
+    root.restartWorkspacesHideTimer()
+  }
+
+  // A click anywhere outside the popup dismisses it: settings are saved and
+  // the shell is bounced so they take full effect.
+  function dismissWsConfigAndRestart() {
+    if (!root.wsConfigOpen) return
+    root.closeWsConfig()
+    Quickshell.execDetached(["/usr/share/omarchy/bin/omarchy-restart-shell"])
+  }
+
+  Timer {
+    // Close the popup after a short idle so it cannot sit on screen forever.
+    id: wsConfigPeel
+    interval: 8000
+    repeat: false
+    onTriggered: root.closeWsConfig()
+  }
+
+  readonly property int wsConfigPopupW: Style.space(260)
+  readonly property int wsConfigPopupH: Style.space(328)
+  readonly property int wsConfigPopupX: Math.max(0, Math.round(root.stripX + (root.stripW - root.wsConfigPopupW) / 2))
+  readonly property int wsConfigPopupY: Math.max(0, root.stripY - root.wsConfigPopupH - Style.space(12))
+
+  function persistWorkspaceSettings() {
+    var payload = JSON.stringify(root.withWorkspaceSettings(), null, 2) + "\n"
+    root.lastWrittenShellText = payload
+    userShellFile.setText(payload)
+  }
+
+  function withWorkspaceSettings() {
+    var cfg = root.parseUserConfig(userShellFile.text())
+    if (!Array.isArray(cfg.plugins)) cfg.plugins = []
+    var found = false
+    for (var i = 0; i < cfg.plugins.length; i++) {
+      if (cfg.plugins[i] && String(cfg.plugins[i].id) === "speakercorners") {
+        cfg.plugins[i].wsScale = Math.round(root.wsScale * 100) / 100
+        cfg.plugins[i].wsOpacity = Math.round(root.wsOpacity * 100) / 100
+        cfg.plugins[i].wsAutoHide = root.wsAutoHide === true
+        cfg.plugins[i].wsToggleEnabled = root.wsToggleEnabled === true
+        cfg.plugins[i].wsGap = Math.round(root.wsCardGap)
+        cfg.plugins[i].wsStripGap = Math.round(root.wsStripGap)
+        found = true
+      }
+    }
+    if (!found) {
+      cfg.plugins.push({
+        id: "speakercorners",
+        wsScale: Math.round(root.wsScale * 100) / 100,
+        wsOpacity: Math.round(root.wsOpacity * 100) / 100,
+        wsAutoHide: root.wsAutoHide === true,
+        wsToggleEnabled: root.wsToggleEnabled === true,
+        wsGap: Math.round(root.wsCardGap),
+        wsStripGap: Math.round(root.wsStripGap)
+      })
+    }
     return cfg
   }
 
@@ -950,6 +1161,14 @@ Item {
     Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", "omarchy-update"])
   }
 
+  Timer {
+    // Cover the slide-out after close: the float bar stays visible (fbSliding)
+    // for exactly the slide duration, then hides.
+    id: fbSlideOutTimer
+    interval: root.effectivePanelAnimMs
+    onTriggered: root.fbSliding = false
+  }
+
   function openFloatbar(payloadJson) {
     root.readConfig()
     root.refreshWidgetEntries()
@@ -957,8 +1176,15 @@ Item {
     root.checkSystemUpdate()
     root.floatbarOpened = true
   }
-  function closeFloatbar() { root.floatbarOpened = false }
+  function closeFloatbar() {
+    root.floatbarOpened = false
+    if (root.effectivePanelAnimMs > 0) fbSlideOutTimer.start()
+    else root.fbSliding = false
+  }
   function toggleFloatbar() { root.floatbarOpened ? root.closeFloatbar() : root.openFloatbar("{}") }
+
+  // The bottom-left corner is left unassigned by default so the user can bind
+  // any action to it from shell.json.
 
   // ========================================================================
   //  WORKSPACES FLOAT STRIP (bottom-right)
@@ -967,7 +1193,7 @@ Item {
   property int wsCardWidth: Style.space(112)
   property int wsCardGap: Style.space(10)
   property int wsOuterPad: Style.space(10)
-  property int wsPanelMargin: Style.space(44)
+  property int wsPanelMargin: Style.space(22)
   property bool wsEdgeEnabled: false
   property int wsEdgeHeight: Style.space(6)
   property var workspaces: []
@@ -978,18 +1204,23 @@ Item {
   property var desktopEntries: []
 
   readonly property int effectiveWsCardWidth: {
-    var n = Math.max(1, root.workspaces.length + (root.workspaces.length > 0 ? 1 : 0))
+    var wsCount = root.workspaces.length
+    // App-menu button + workspace cards + new-workspace card.
+    var extraCards = wsCount > 0 ? 2 : 0
+    var n = Math.max(1, wsCount + extraCards)
     var screen = root.activeScreen
     var avail = screen ? screen.width : 1920
     var maxW = Math.floor((avail - root.wsPanelMargin * 2 - root.wsCardGap * (n - 1) - root.wsOuterPad * 2 - 4) / n)
-    return Math.max(64, Math.min(root.wsCardWidth, maxW))
+    var desired = Math.round(root.wsCardWidth * root.wsScale)
+    return Math.max(40, Math.min(desired, maxW))
   }
 
   // The strip always sits centered at the bottom of the focused screen.
   readonly property int wsBorderWidth: Math.max(1, Style.space(2))
   readonly property int stripW: {
     var n = root.workspaces.length
-    var cards = Math.max(1, n) + (n > 0 ? 1 : 0)
+    // App-menu button + workspace cards + new-workspace card.
+    var cards = Math.max(1, n) + (n > 0 ? 2 : 0)
     var gaps = Math.max(0, cards - 1)
     return root.effectiveWsCardWidth * cards
       + root.wsCardGap * gaps
@@ -1004,18 +1235,80 @@ Item {
   readonly property int stripY: Math.max(0, panel.height - root.stripH - root.cardBottomMargin)
 
   // Bar-aware bottom margin so the strip never sits under a bottom bar.
+  // The gap between the strip and the screen bottom is wsStripGap; the same
+  // gap separates the strip from the windows (see stripReserve).
   readonly property real cardBottomMargin: {
     var bar = shell ? shell.bar : null
     if (bar && bar.position === "bottom" && !bar.barHidden) {
-      return wsPanelMargin + Number(bar.barSize || 0)
+      return wsStripGap + Number(bar.barSize || 0)
     }
-    return wsPanelMargin
+    return wsStripGap
+  }
+
+  // The bottom reserved area tracks the strip's on-screen region so a
+  // maximized window stops one wsStripGap above the strip's top edge (equal
+  // to the strip's own bottom gap): stripHeight + gap above + gap below. The
+  // value is rewritten to ~/.config/omarchy/.speakercorners-reserve and
+  // applied with a Hyprland reload whenever the strip grows/shrinks (e.g. the
+  // Size slider or a change in the number of workspaces). monitors.lua reads
+  // that sidecar. While the strip and menu bar are hidden by the bottom-left
+  // hot corner, nothing is reserved so windows reclaim the space.
+  readonly property string stripReservePath: Quickshell.env("HOME") + "/.config/omarchy/.speakercorners-reserve"
+  readonly property int stripReserve: root.chromeHidden
+    ? 0
+    : Math.max(0, Math.round(root.stripH + root.cardBottomMargin * 2))
+  property int stripReserveLast: -1
+  property bool stripReservePendingReload: false
+  FileView {
+    id: stripReserveFile
+    path: root.stripReservePath
+    watchChanges: false
+    atomicWrites: true
+    printErrors: false
+  }
+  // File write is cheap, so it happens on every change; the Hyprland reload
+  // is deferred one extra tick so a sliding/typing the value settles and the
+  // compositor reloads only once (no reload spam while dragging the Size
+  // slider or typing a margin).
+  function syncStripReserve() {
+    var value = root.stripReserve
+    if (root.stripReserveLast === value) {
+      if (root.stripReservePendingReload) {
+        root.stripReservePendingReload = false
+        Quickshell.execDetached(["hyprctl", "reload"])
+      }
+      return
+    }
+    root.stripReserveLast = value
+    stripReserveFile.setText(String(Math.round(value)))
+    root.stripReservePendingReload = true
+  }
+  Timer {
+    id: stripReserveTimer
+    interval: 700
+    repeat: true
+    running: true
+    triggeredOnStart: true
+    onTriggered: root.syncStripReserve()
   }
 
   Timer {
     id: readyTimer
     interval: 1500
-    onTriggered: root.ready = true
+    onTriggered: {
+      root.ready = true
+      // With the bottom-center toggle off the strip must be on screen from the
+      // start instead of waiting for a hot-corner trigger.
+      if (root.wsAlwaysVisible) root.showWorkspaces()
+    }
+  }
+
+  Timer {
+    // Cover the slide-out after hide: the workspace strip stays visible
+    // (wsSliding) for exactly the slide duration, then hides.
+    id: wsSlideOutTimer
+    interval: root.effectivePanelAnimMs
+    onTriggered: root.wsSliding = false
   }
 
   Component.onCompleted: {
@@ -1042,6 +1335,9 @@ Item {
     wsHideTimer.stop()
     wsSettleTimer.stop()
     root.workspacesOpened = false
+    root.closeWsConfig()
+    if (root.effectivePanelAnimMs > 0) wsSlideOutTimer.start()
+    else root.wsSliding = false
   }
 
   function toggleWorkspaces() { root.workspacesOpened ? root.hideWorkspaces() : root.showWorkspaces() }
@@ -1072,6 +1368,7 @@ Item {
   }
 
   function restartWorkspacesHideTimer() {
+    if (!root.wsAutoHide || root.wsConfigOpen || root.wsAlwaysVisible) { wsHideTimer.stop(); return }
     if (stripHover.hovered) wsHideTimer.stop()
     else wsHideTimer.restart()
   }
@@ -1092,6 +1389,7 @@ Item {
   // rather than the plain "workspace <id>" dispatcher (which errors under
   // hl.dispatch wrap).
   function focusWorkspace(ws) {
+    root.closeWsConfig()
     if (!ws) return
     var target = (ws.name && String(ws.name).length > 0) ? String(ws.name) : String(ws.id)
     var expr = 'hl.dsp.focus({ workspace = "' + root.luaStringLiteral(target) + '" })'
@@ -1145,7 +1443,9 @@ Item {
     target: Hyprland
 
     function onFocusedWorkspaceChanged() {
-      if (root.ready) root.showWorkspaces()
+      if (!root.ready) return
+      if (root.chromeHidden) { root.briefWorkspaceFlash(); return }
+      root.showWorkspaces()
     }
 
     function onRawEvent(event) {
@@ -1200,6 +1500,13 @@ Item {
     function close(): string { root.close(); return "ok" }
     function toggle(): string { root.toggle(); return "ok" }
     function state(): string { return root.stateString() }
+    function version(): string { return "v2-lp" }
+    // Run a corner action directly (same path the hot corners use). Useful
+    // for keybindings: omarchy-shell speakercorners triggeraction toggle-window-modes
+    function triggeraction(action: string): string {
+      root.trigger(String(action || ""))
+      return "ok"
+    }
   }
 
   // Legacy targets so existing commands/scripts keep working even though the
@@ -1244,6 +1551,10 @@ Item {
       Region { x: 0; y: 0; width: root.keysWanted ? panel.width : 0; height: root.keysWanted ? panel.height : 0 }
       // workspace strip clicks (and null while it is hidden)
       Region { x: root.stripX; y: root.stripY; width: root.workspacesOpened ? root.stripW : 0; height: root.workspacesOpened ? root.stripH : 0 }
+      // workspace configuration popup (while open)
+      Region { x: root.wsConfigPopupX; y: root.wsConfigPopupY; width: root.wsConfigOpen ? root.wsConfigPopupW : 0; height: root.wsConfigOpen ? root.wsConfigPopupH : 0 }
+      // fullscreen block while the config popup is open (outside clicks dismiss it)
+      Region { x: 0; y: 0; width: root.wsConfigOpen ? panel.width : 0; height: root.wsConfigOpen ? panel.height : 0 }
       // optional bottom edge (opt-in)
       Region { x: 0; y: root.wsEdgeEnabled ? panel.height - root.wsEdgeHeight : panel.height; width: root.wsEdgeEnabled ? panel.width : 0; height: root.wsEdgeEnabled ? root.wsEdgeHeight : 0 }
     }
@@ -1260,7 +1571,8 @@ Item {
     // ---- Float bar card (bottom-left) ----
     BorderSurface {
       z: 2
-      visible: root.floatbarOpened
+      // Kept visible for the closing slide via fbSliding (see closeFloatbar()).
+      visible: root.floatbarOpened || root.fbSliding
       radius: root.cornerRadius
       color: root.cardColor
       borderSpec: Border.flat(root.cardBorder, Math.max(1, Style.space(2)))
@@ -1277,7 +1589,11 @@ Item {
       implicitHeight: root.computedContentHeight + contentTopInset + contentBottomInset
 
       x: root.cornerMargin
-      y: panel.height - height - root.cornerMargin
+      // Slides up from below the screen edge; parked off-screen when closed.
+      y: root.floatbarOpened ? panel.height - height - root.cornerMargin : panel.height
+      Behavior on y {
+        NumberAnimation { duration: root.effectivePanelAnimMs; easing.type: Easing.OutCubic }
+      }
 
       // Swallow clicks on the card so they don't reach the backdrop catcher.
       MouseArea { anchors.fill: parent; onClicked: { } }
@@ -1330,17 +1646,27 @@ Item {
     BorderSurface {
       id: strip
       z: 4
-      visible: root.workspacesOpened
+      // Kept visible for the closing slide via wsSliding (see hideWorkspaces()).
+      visible: root.workspacesOpened || root.wsSliding
       x: root.stripX
-      y: root.stripY
+      // Slides up from below the screen edge; parked off-screen when closed.
+      y: root.workspacesOpened ? root.stripY : panel.height
       width: root.stripW
       height: root.stripH
       radius: root.cornerRadius
-      color: Util.alpha(Color.popups.background, 0.97)
+      color: Util.alpha(Color.popups.background, root.wsOpacity)
       borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
 
-      Behavior on opacity {
-        NumberAnimation { duration: root.cornerRadius > 0 ? 120 : 0; easing.type: Easing.OutCubic }
+      Behavior on y {
+        NumberAnimation { duration: root.effectivePanelAnimMs; easing.type: Easing.OutCubic }
+      }
+
+      // Right-click anywhere on the strip background brings up its
+      // configuration (size / transparency / auto-hide).
+      MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.RightButton
+        onClicked: root.toggleWsConfig()
       }
 
       // Keep the overview open while the pointer is over it, so a click can
@@ -1349,7 +1675,7 @@ Item {
         id: stripHover
         onHoveredChanged: {
           if (hovered) wsHideTimer.stop()
-          else if (root.workspacesOpened) wsHideTimer.restart()
+          else if (root.workspacesOpened) root.restartWorkspacesHideTimer()
         }
       }
 
@@ -1358,6 +1684,46 @@ Item {
         anchors.topMargin: root.wsOuterPad
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: root.wsCardGap
+
+        // App-menu launcher (opens the Omarchy menu, same as the bar's menu
+        // widget): a card that matches the workspace preview tiles.
+        Item {
+          width: root.effectiveWsCardWidth
+          height: root.wsCardPreviewH + root.wsCardLabelH
+          visible: root.workspaces.length > 0
+
+          Rectangle {
+            anchors.centerIn: parent
+            width: root.effectiveWsCardWidth
+            height: root.wsCardPreviewH
+            radius: root.cornerRadius
+            color: appMenuArea.containsMouse
+              ? Util.alpha(Color.popups.text, 0.12)
+              : Util.alpha(Color.popups.text, 0.06)
+            border.width: Math.max(1, Style.space(1))
+            border.color: Util.alpha(Color.popups.text, 0.15)
+
+            Text {
+              anchors.centerIn: parent
+              text: "\ue900"
+              font.family: "omarchy"
+              font.pixelSize: Math.max(14, Math.round(root.effectiveWsCardWidth * 0.32))
+              color: appMenuArea.containsMouse
+                ? Color.popups.text
+                : Util.alpha(Color.popups.text, 0.6)
+            }
+
+            MouseArea {
+              id: appMenuArea
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              // Open straight into the applications list, not the full
+              // omarchy menu ("root").
+              onClicked: Quickshell.execDetached(["omarchy-shell", "shell", "toggle", "omarchy.menu", '{"menu":"apps"}'])
+            }
+          }
+        }
 
         Repeater {
           model: root.workspaces
@@ -1406,6 +1772,198 @@ Item {
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
               onClicked: root.openNewWorkspace()
+            }
+          }
+        }
+      }
+    }
+
+    // ---- Workspaces configuration popup ----
+    // Right-click the strip to open. The sliders apply live and commit to
+    // shell.json when the popup closes; the strip's mask admits this region
+    // only while it is open.
+    // Transparent catcher while the popup is open: any click outside it
+    // dismisses (saves + restarts the shell).
+    MouseArea {
+      anchors.fill: parent
+      z: 10
+      visible: root.wsConfigOpen
+      onClicked: root.dismissWsConfigAndRestart()
+    }
+
+    BorderSurface {
+      id: wsConfigPopup
+      z: 12
+      visible: root.wsConfigOpen
+      x: root.wsConfigPopupX
+      y: root.wsConfigPopupY
+      width: root.wsConfigPopupW
+      height: root.wsConfigPopupH
+      radius: root.cornerRadius
+      // Same transparency as the strip itself.
+      color: Util.alpha(Color.popups.background, root.wsOpacity)
+      borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
+
+      // While the strip auto-hides below, the popup keeps it alive.
+      HoverHandler {
+        onHoveredChanged: {
+          if (hovered) wsHideTimer.stop()
+          else if (root.workspacesOpened) root.restartWorkspacesHideTimer()
+        }
+      }
+
+      Column {
+        x: Style.space(12)
+        y: Style.space(12)
+        width: parent.width - Style.space(24)
+        spacing: Style.space(8)
+
+        Text {
+          width: parent.width
+          text: "Workspace strip"
+          textFormat: Text.PlainText
+          font.family: Style.font.family
+          font.pixelSize: Style.font.subtitle
+          font.bold: true
+          color: Color.popups.text
+        }
+
+        MiniSlider {
+          width: parent.width
+          label: "Size"
+          min: 0.5
+          max: 2.0
+          value: root.wsScale
+          format: function(v) { return Math.round(v * 100) + "%" }
+          onAdjust: function(v) { root.wsScale = v; wsConfigPeel.restart() }
+          onCommitted: root.persistWorkspaceSettings()
+        }
+
+        MiniSlider {
+          width: parent.width
+          label: "Transparency"
+          min: 0.1
+          max: 1.0
+          value: root.wsOpacity
+          format: function(v) { return Math.round((1 - v) * 100) + "%" }
+          onAdjust: function(v) { root.wsOpacity = v; wsConfigPeel.restart() }
+          onCommitted: root.persistWorkspaceSettings()
+        }
+
+        MiniSlider {
+          width: parent.width
+          label: "Spacing"
+          min: 0
+          max: Style.space(40)
+          value: root.wsCardGap
+          format: function(v) { return Math.round(v) + "px" }
+          onAdjust: function(v) { root.wsCardGap = v; wsConfigPeel.restart() }
+          onCommitted: root.persistWorkspaceSettings()
+        }
+
+        MiniSlider {
+          width: parent.width
+          label: "Gap"
+          min: 0
+          max: Style.space(40)
+          value: root.wsStripGap
+          format: function(v) { return Math.round(v) + "px" }
+          onAdjust: function(v) { root.wsStripGap = v; wsConfigPeel.restart() }
+          onCommitted: root.persistWorkspaceSettings()
+        }
+
+        Item {
+          id: autoHideRow
+          width: parent.width
+          height: Style.space(26)
+
+          Text {
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Auto-hide"
+            textFormat: Text.PlainText
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            color: Util.alpha(Color.popups.text, 0.85)
+          }
+
+          Rectangle {
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            width: Style.space(34)
+            height: Style.space(18)
+            radius: height / 2
+            color: root.wsAutoHide ? Color.accent : Util.alpha(Color.popups.text, 0.18)
+            Behavior on color { ColorAnimation { duration: 120 } }
+
+            Rectangle {
+              anchors.verticalCenter: parent.verticalCenter
+              x: root.wsAutoHide
+                ? parent.width - width - Math.max(2, Style.space(1))
+                : Math.max(2, Style.space(1))
+              width: Style.space(14)
+              height: Style.space(14)
+              radius: width / 2
+              color: "#ffffff"
+              Behavior on x { NumberAnimation { duration: 120 } }
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              onClicked: {
+                root.wsAutoHide = !root.wsAutoHide
+                root.persistWorkspaceSettings()
+                root.restartWorkspacesHideTimer()
+                wsConfigPeel.restart()
+              }
+            }
+          }
+        }
+
+        Item {
+          id: toggleRow
+          width: parent.width
+          height: Style.space(26)
+
+          Text {
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Bottom-center toggle"
+            textFormat: Text.PlainText
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            color: Util.alpha(Color.popups.text, 0.85)
+          }
+
+          Rectangle {
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            width: Style.space(34)
+            height: Style.space(18)
+            radius: height / 2
+            color: root.wsToggleEnabled ? Color.accent : Util.alpha(Color.popups.text, 0.18)
+            Behavior on color { ColorAnimation { duration: 120 } }
+
+            Rectangle {
+              anchors.verticalCenter: parent.verticalCenter
+              x: root.wsToggleEnabled
+                ? parent.width - width - Math.max(2, Style.space(1))
+                : Math.max(2, Style.space(1))
+              width: Style.space(14)
+              height: Style.space(14)
+              radius: width / 2
+              color: "#ffffff"
+              Behavior on x { NumberAnimation { duration: 120 } }
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              onClicked: {
+                root.wsToggleEnabled = !root.wsToggleEnabled
+                root.persistWorkspaceSettings()
+                root.restartWorkspacesHideTimer()
+                wsConfigPeel.restart()
+              }
             }
           }
         }
@@ -1965,8 +2523,8 @@ component GridCell: Item {
       FloatButton {
         anchors.fill: parent
         visible: gcell.kind === "toggle"
-        text: "\ue900"
-        fontFamily: "omarchy"
+        text: "\u22ee"
+        fontFamily: root.fontFamily
         tooltip: "Toggle Bar"
         reorderable: true
         reorderKey: gcell.cellKey
@@ -1988,6 +2546,113 @@ component GridCell: Item {
         t.dragDropped.connect(function(x, y) {
           root.endGridDrag(Qt.point(x, y))
         })
+      }
+    }
+  }
+
+  // Drag slider used by the workspace configuration popup. No QtQuick.Controls:
+  // the shell only ships hand-rolled widgets, so this matches the rest of the
+  // plugin. `value` is clamped, `adjust` fires on every drag tick and
+  // `committed` once, on release.
+  component MiniSlider: Item {
+    id: ms
+
+    property real value: 0
+    property real min: 0
+    property real max: 1
+    property string label: ""
+    property var format: null
+    signal adjust(real v)
+    signal committed()
+
+    implicitHeight: Style.space(42)
+
+    readonly property real knobW: Style.space(16)
+    readonly property real trackH: Style.space(4)
+    readonly property real trackX: 0
+    readonly property real trackW: ms.width - Style.space(70)
+
+    readonly property real knobX: {
+      if (ms.max <= ms.min) return ms.trackX
+      var t = Math.max(0, Math.min(1, (ms.value - ms.min) / (ms.max - ms.min)))
+      return ms.trackX + t * ms.trackW - ms.knobW / 2
+    }
+    readonly property real fillW: {
+      if (ms.max <= ms.min) return 0
+      var t = Math.max(0, Math.min(1, (ms.value - ms.min) / (ms.max - ms.min)))
+      return t * ms.trackW
+    }
+
+    function pushX(x) {
+      if (ms.max <= ms.min) return
+      var t = Math.max(0, Math.min(1, (x - ms.trackX) / ms.trackW))
+      ms.value = ms.min + (ms.max - ms.min) * t
+      ms.adjust(ms.value)
+    }
+
+    Text {
+      anchors.left: parent.left
+      anchors.top: parent.top
+      text: ms.label
+      textFormat: Text.PlainText
+      font.family: Style.font.family
+      font.pixelSize: Style.font.caption
+      color: Util.alpha(Color.popups.text, 0.85)
+    }
+
+    Text {
+      anchors.right: parent.right
+      anchors.top: parent.top
+      text: ms.format ? ms.format(ms.value) : String(Math.round(ms.value * 100))
+      textFormat: Text.PlainText
+      font.family: Style.font.family
+      font.pixelSize: Style.font.caption
+      color: Util.alpha(Color.popups.text, 0.55)
+    }
+
+    Item {
+      id: msTrack
+      anchors.left: parent.left
+      anchors.top: parent.top
+      anchors.topMargin: Style.space(20)
+      width: ms.trackW
+      height: ms.trackH + ms.knobW
+
+      Rectangle {
+        id: msRail
+        y: Math.round((ms.trackH + ms.knobW) / 2 - ms.trackH / 2)
+        width: parent.width
+        height: ms.trackH
+        radius: ms.trackH / 2
+        color: Util.alpha(Color.popups.text, 0.18)
+      }
+
+      Rectangle {
+        y: msRail.y
+        width: ms.fillW
+        height: ms.trackH
+        radius: ms.trackH / 2
+        color: Color.accent
+      }
+
+      Rectangle {
+        width: ms.knobW
+        height: ms.knobW
+        radius: ms.knobW / 2
+        x: ms.knobX
+        y: Math.round((ms.trackH + ms.knobW) / 2 - ms.knobW / 2)
+        color: msDrag.pressed ? Qt.lighter(Color.accent, 1.1) : Color.accent
+        border.width: Math.max(1, Style.space(1))
+        border.color: Util.alpha(Color.popups.text, 0.4)
+      }
+
+      MouseArea {
+        id: msDrag
+        anchors.fill: parent
+        cursorShape: Qt.PointingHandCursor
+        onPressed: function(mouse) { ms.pushX(mouse.x) }
+        onPositionChanged: function(mouse) { if (pressed) ms.pushX(mouse.x) }
+        onReleased: ms.committed()
       }
     }
   }

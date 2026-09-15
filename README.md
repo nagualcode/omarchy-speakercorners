@@ -23,7 +23,10 @@ single masked, click-through overlay. No window stack, no bloat — one surface,
 - **🌆 Floating workspace strip (bottom-center)** — one quarter of the bottom
   edge's width, centered; hover and wander between workspaces. Each card shows
   a live preview with app icons resolved straight from your desktop entries, an
-  urgent dot, and a `+` to mint a new workspace.
+  urgent dot, and a `+` to mint a new workspace. Its distance to the screen
+  bottom is set by `wsStripGap` (a `Gap` slider in the settings popup), and an
+  **apps button** on the strip opens the Omarchy menu straight into the
+  applications list.
 - **🧊 Icon panel (bottom-left)** — a compact card nerd-friendly enough to live on:
   - **🕐 A clock** that opens the real menu-bar calendar when clicked.
   - **🔋 Smart icons** — battery (with plug/AC state), Wi-Fi (signal strength),
@@ -63,16 +66,21 @@ Settings live in the `speakercorners` entry of
   "enabled": true,
   "dwellMs": 139,          // how long the pointer must rest to fire (120–3000)
   "targetSize": 8,         // hot-corner hitbox, in px
+  "animations": true,      // false to disable the icon-panel / workspace-strip slide
   "clockFormat": "dddd HH:mm",
   "cardWidth": "auto",     // or a fixed px width
   "topLeftAction": "command",
   "topLeftCommand": "omarchy menu",
-  "bottomLeftAction": "command",
-  "bottomLeftCommand": "omarchy-shell floatbar toggle",
+  "topRightAction": "toggle-window-modes",
+  "topRightCommand": "",
+  "bottomLeftAction": "toggle-hide-chrome",
+  "bottomLeftCommand": "",
   "bottomRightAction": "command",
   "bottomRightCommand": "omarchy-shell io.github.moizibnyousaf.omawhatsapp toggleDropdown '{}'",
   "bottomCenterAction": "command",
   "bottomCenterCommand": "omarchy-shell workspace-overview toggle",
+  "wsScale": 0.5,           // workspace strip scale (height multiplier)
+  "wsStripGap": 21,         // gap between the strip and the screen bottom
   "floatGridOrder": [
     "action:browser",
     "action:terminal",
@@ -117,10 +125,15 @@ Edit `actionEntries` to change them.
 | Key                 | values                                              |
 | ------------------- | --------------------------------------------------- |
 | `topLeftAction`     | `command` / `none` — Omarchy menu toggle by default     |
-| `topRightAction`    | `command` / `none` — nothing by default             |
-| `bottomLeftAction`  | `command` / `none` — icon panel toggle by default      |
+| `topRightAction`    | `command` / `toggle-window-modes` / `none` — window-mode toggle by default |
+| `bottomLeftAction`  | `command` / `toggle-hide-chrome` / `none` — hide-chrome toggle by default |
 | `bottomRightAction` | `command` / `none` — WhatsApp dropdown by default   |
 | `bottomCenterAction`| `command` / `none` — workspace strip by default     |
+
+`toggle-window-modes` cycles the focused window's mode
+(`float` → `maximize` → `restore`) and `toggle-hide-chrome` hides the
+workspace strip, bar and panel layer (bottom-left corner); both can also be
+triggered over IPC with `omarchy-shell speakercorners triggeraction <name>`.
 
 Each `*Command` runs via `bash -lc`, so `omarchy-*` helpers and your shell
 niceties are all fair game.
