@@ -1811,11 +1811,14 @@ Item {
 
             // nf-md-apps (U+F0192) -- the Nerd Font "app grid" glyph. The
             // nf-oct-apps glyph does not exist in the installed Nerd Font, so
-            // the Material grid is used instead. At full opacity against the
-            // dim card so the icon stays clearly visible.
+            // the Material grid is used instead. U+F0192 sits in the
+            // supplementary plane, so it is spelled as a UTF-16 surrogate
+            // pair (\uDB80\uDD92) -- a plain \uF192 would be a different
+            // glyph (fa-outdent). At full opacity against the dim card so the
+            // icon stays clearly visible.
             Text {
               anchors.centerIn: parent
-              text: "\uf192"
+              text: "\uDB80\uDD92"
               font.family: "JetBrainsMono Nerd Font"
               font.pixelSize: Math.max(14, Math.round(root.effectiveWsCardWidth * 0.32))
               color: appMenuArea.containsMouse
