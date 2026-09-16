@@ -28,9 +28,10 @@ single masked, click-through overlay. No window stack, no bloat — one surface,
   Right-click a workspace card for a context menu with **Move All** (moves
   every window of that workspace one workspace back — hidden on the first
   workspace) and **Close All** (closes every window of that workspace).
-  The **apps button** at the right of the strip opens a terminal with a
-  left-click, and the Omarchy menu straight into the applications list with a
-  right-click.
+  The **apps button** at the right of the strip opens the Omarchy menu
+  straight into the applications list with a left-click and a terminal with a
+  right-click (its grid glyph is `nf-md-apps`; the `nf-oct-apps` Octicons
+  glyph is not present in the installed Nerd Font).
 - **🧊 Icon panel (bottom-left)** — a compact card nerd-friendly enough to live on:
   - **🕐 A clock** that opens the real menu-bar calendar when clicked.
   - **🔋 Smart icons** — battery (with plug/AC state), Wi-Fi (signal strength),
@@ -134,8 +135,11 @@ Edit `actionEntries` to change them.
 | `bottomRightAction` | `command` / `none` — WhatsApp dropdown by default   |
 | `bottomCenterAction`| `command` / `none` — workspace strip by default     |
 
-`toggle-window-modes` cycles the focused window's mode
-(`float` → `maximize` → `restore`) and `toggle-hide-chrome` hides the
+`toggle-window-modes` cycles the active workspace between everything-tiled
+and everything-floating. When going tiled it also understands that a
+fullscreen/maximized window would keep swallowing the split: with more than
+one window on the workspace it pulls such a window back out of fullscreen so
+the screen genuinely divides between the apps. `toggle-hide-chrome` hides the
 workspace strip, bar and panel layer (bottom-left corner); both can also be
 triggered over IPC with `omarchy-shell speakercorners triggeraction <name>`.
 

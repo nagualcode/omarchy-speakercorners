@@ -361,16 +361,30 @@ Item {
     try { list = JSON.parse(text || "[]") } catch (e) { return }
     if (!Array.isArray(list)) return
     var wantFloating = !root.allWindowsTiled
+    var windows = []
     for (var i = 0; i < list.length; i++) {
       var c = list[i]
       if (!c || c.mapped === false || c.hidden === true) continue
       if (!c.workspace || Number(c.workspace.id) !== wsId) continue
       var addr = String(c.address || "")
       if (!/^0x[0-9a-fA-F]+$/.test(addr)) continue
-      if (c.floating === true && wantFloating) continue
-      if (c.floating === false && !wantFloating) continue
-      var expr = 'hl.dsp.window.float({ action = "toggle", window = "address:' + addr + '" })'
-      Quickshell.execDetached(["hyprctl", "dispatch", expr])
+      windows.push({ address: addr, floating: c.floating === true, fullscreen: Number(c.fullscreen) || 0 })
+    }
+    for (var j = 0; j < windows.length; j++) {
+      var w = windows[j]
+      if (w.floating !== wantFloating) {
+        var expr = 'hl.dsp.window.float({ action = "toggle", window = "address:' + w.address + '" })'
+        Quickshell.execDetached(["hyprctl", "dispatch", expr])
+      }
+      // When tiling the whole workspace, a window left in fullscreen or
+      // maximized would keep swallowing the layout and hide the rest behind
+      // it. Shrink it back into the tiling grid so the screen really splits
+      // between every window -- but only when another window exists to share
+      // the area, so an intended single-app fullscreen is left alone.
+      if (!wantFloating && windows.length > 1 && w.fullscreen !== 0) {
+        var fsExpr = 'hl.dsp.window.fullscreen_state({ internal = 0, client = 0, window = "address:' + w.address + '" })'
+        Quickshell.execDetached(["hyprctl", "dispatch", fsExpr])
+      }
     }
   }
 
@@ -1775,8 +1789,8 @@ Item {
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: root.wsCardGap
 
-        // App launcher card: left-click opens a terminal, right-click opens the
-        // Omarchy menu straight into the applications list.
+        // App launcher card: left-click opens the Omarchy menu straight into
+        // the applications list, right-click opens a terminal.
         Item {
           width: root.effectiveWsCardWidth
           height: root.wsCardPreviewH + root.wsCardLabelH
@@ -1791,16 +1805,22 @@ Item {
               ? Util.alpha(Color.popups.text, 0.12)
               : Util.alpha(Color.popups.text, 0.06)
             border.width: Math.max(1, Style.space(1))
-            border.color: Util.alpha(Color.popups.text, 0.15)
+            border.color: appMenuArea.containsMouse
+              ? Util.alpha(Color.accent, 0.5)
+              : Util.alpha(Color.popups.text, 0.15)
 
+            // nf-md-apps (U+F0192) -- the Nerd Font "app grid" glyph. The
+            // nf-oct-apps glyph does not exist in the installed Nerd Font, so
+            // the Material grid is used instead. At full opacity against the
+            // dim card so the icon stays clearly visible.
             Text {
               anchors.centerIn: parent
-              text: "\uf003b"
+              text: "\uf192"
               font.family: "JetBrainsMono Nerd Font"
               font.pixelSize: Math.max(14, Math.round(root.effectiveWsCardWidth * 0.32))
               color: appMenuArea.containsMouse
-                ? Color.popups.text
-                : Util.alpha(Color.popups.text, 0.6)
+                ? Color.accent
+                : Color.popups.text
             }
 
             MouseArea {
@@ -1809,13 +1829,13 @@ Item {
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
               acceptedButtons: Qt.LeftButton | Qt.RightButton
-              // Left opens the terminal; right opens the applications list
-              // (not the full omarchy menu "root").
+              // Left opens the applications list (not the full omarchy menu
+              // "root"); right opens the terminal.
               onClicked: {
                 if (mouse.button === Qt.RightButton) {
-                  Quickshell.execDetached(["omarchy-shell", "shell", "toggle", "omarchy.menu", '{"menu":"apps"}'])
-                } else {
                   Quickshell.execDetached(["omarchy-launch-terminal"])
+                } else {
+                  Quickshell.execDetached(["omarchy-shell", "shell", "toggle", "omarchy.menu", '{"menu":"apps"}'])
                 }
               }
             }
