@@ -374,6 +374,90 @@ Item {
     }
   }
 
+  // ---- Workspace-card context menu -------------------------------------
+  // Right-clicking a workspace card opens a small menu with "Move All"
+  // (moves every window of the workspace one workspace back) and
+  // "Close All". Windows are collected via hyprctl -j clients first, then
+  // each one is dispatched individually (the Lua dispatchers act on one
+  // window at a time, addressed explicitly).
+  property bool wsMenuOpen: false
+  property int wsMenuWsId: -1
+  property int wsMenuX: 0
+  property int wsMenuY: 0
+  readonly property int wsMenuRowH: Style.space(34)
+  readonly property int wsMenuPad: Style.space(8)
+  readonly property int wsMenuW: Style.space(180)
+  readonly property int wsMenuRows: root.wsMenuWsId > 1 ? 2 : 1
+  readonly property int wsMenuH: root.wsMenuPad * 2 + root.wsMenuRows * root.wsMenuRowH
+
+  property string wsMenuAction: ""
+  property int wsMenuActionWs: -1
+
+  Process {
+    id: wsMenuClientsProc
+    command: ["hyprctl", "-j", "clients"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.applyWsMenuAction(text)
+    }
+  }
+
+  function openWsContextMenu(ws, point) {
+    if (!ws) return
+    root.closeWsConfig()
+    root.wsMenuWsId = Number(ws.id)
+    var w = root.wsMenuW
+    var h = root.wsMenuH
+    var x = Math.max(0, Math.min(point.x + root.effectiveWsCardWidth / 2 - w / 2, panel.width - w))
+    var y = Math.max(0, point.y - h - Style.space(12))
+    root.wsMenuX = Math.round(x)
+    root.wsMenuY = Math.round(y)
+    root.wsMenuOpen = true
+    wsHideTimer.stop()
+  }
+
+  function closeWsMenu() {
+    if (!root.wsMenuOpen && root.wsMenuAction === "") return
+    root.wsMenuOpen = false
+    root.wsMenuWsId = -1
+  }
+
+  function runWsMenuAction(action, wsId) {
+    root.wsMenuAction = action
+    root.wsMenuActionWs = Number(wsId)
+    root.closeWsMenu()
+    wsMenuClientsProc.running = true
+  }
+
+  function applyWsMenuAction(text) {
+    var action = root.wsMenuAction
+    var wsId = Number(root.wsMenuActionWs)
+    root.wsMenuAction = ""
+    root.wsMenuActionWs = -1
+    if (!action || !isFinite(wsId)) return
+    var list = []
+    try { list = JSON.parse(text || "[]") } catch (e) { return }
+    if (!Array.isArray(list)) return
+    var addrs = []
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i]
+      if (!c || c.mapped === false || c.hidden === true) continue
+      if (!c.workspace || Number(c.workspace.id) !== wsId) continue
+      var addr = String(c.address || "")
+      if (/^0x[0-9a-fA-F]+$/.test(addr)) addrs.push(addr)
+    }
+    for (var j = 0; j < addrs.length; j++) {
+      if (action === "move-all") {
+        var target = wsId - 1
+        var expr = 'hl.dsp.window.move({ workspace = "' + String(target) + '", window = "address:' + addrs[j] + '", follow = false })'
+        Quickshell.execDetached(["hyprctl", "dispatch", expr])
+      } else if (action === "close-all") {
+        var expr = 'hl.dsp.window.close({ window = "address:' + addrs[j] + '" })'
+        Quickshell.execDetached(["hyprctl", "dispatch", expr])
+      }
+    }
+  }
+
   // ---- Cursor-based hot-corner detection --------------------------------
   // The pointer position is read straight from Hyprland instead of relying
   // on hover on a layer window. An overlay surface that sits on top in a
@@ -914,6 +998,7 @@ Item {
   function toggleWsConfig() { root.wsConfigOpen ? root.closeWsConfig() : root.openWsConfig() }
 
   function openWsConfig() {
+    root.closeWsMenu()
     root.wsConfigOpen = true
     wsConfigPeel.restart()
   }
@@ -1335,6 +1420,7 @@ Item {
     wsHideTimer.stop()
     wsSettleTimer.stop()
     root.workspacesOpened = false
+    root.closeWsMenu()
     root.closeWsConfig()
     if (root.effectivePanelAnimMs > 0) wsSlideOutTimer.start()
     else root.wsSliding = false
@@ -1555,6 +1641,10 @@ Item {
       Region { x: root.wsConfigPopupX; y: root.wsConfigPopupY; width: root.wsConfigOpen ? root.wsConfigPopupW : 0; height: root.wsConfigOpen ? root.wsConfigPopupH : 0 }
       // fullscreen block while the config popup is open (outside clicks dismiss it)
       Region { x: 0; y: 0; width: root.wsConfigOpen ? panel.width : 0; height: root.wsConfigOpen ? panel.height : 0 }
+      // workspace-card context menu (while open)
+      Region { x: root.wsMenuX; y: root.wsMenuY; width: root.wsMenuOpen ? root.wsMenuW : 0; height: root.wsMenuOpen ? root.wsMenuH : 0 }
+      // fullscreen block while the context menu is open (outside clicks dismiss it)
+      Region { x: 0; y: 0; width: root.wsMenuOpen ? panel.width : 0; height: root.wsMenuOpen ? panel.height : 0 }
       // optional bottom edge (opt-in)
       Region { x: 0; y: root.wsEdgeEnabled ? panel.height - root.wsEdgeHeight : panel.height; width: root.wsEdgeEnabled ? panel.width : 0; height: root.wsEdgeEnabled ? root.wsEdgeHeight : 0 }
     }
@@ -1685,8 +1775,8 @@ Item {
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: root.wsCardGap
 
-        // App-menu launcher (opens the Omarchy menu, same as the bar's menu
-        // widget): a card that matches the workspace preview tiles.
+        // App launcher card: left-click opens a terminal, right-click opens the
+        // Omarchy menu straight into the applications list.
         Item {
           width: root.effectiveWsCardWidth
           height: root.wsCardPreviewH + root.wsCardLabelH
@@ -1705,8 +1795,8 @@ Item {
 
             Text {
               anchors.centerIn: parent
-              text: "\ue900"
-              font.family: "omarchy"
+              text: "\uf003b"
+              font.family: "JetBrainsMono Nerd Font"
               font.pixelSize: Math.max(14, Math.round(root.effectiveWsCardWidth * 0.32))
               color: appMenuArea.containsMouse
                 ? Color.popups.text
@@ -1718,9 +1808,16 @@ Item {
               anchors.fill: parent
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
-              // Open straight into the applications list, not the full
-              // omarchy menu ("root").
-              onClicked: Quickshell.execDetached(["omarchy-shell", "shell", "toggle", "omarchy.menu", '{"menu":"apps"}'])
+              acceptedButtons: Qt.LeftButton | Qt.RightButton
+              // Left opens the terminal; right opens the applications list
+              // (not the full omarchy menu "root").
+              onClicked: {
+                if (mouse.button === Qt.RightButton) {
+                  Quickshell.execDetached(["omarchy-shell", "shell", "toggle", "omarchy.menu", '{"menu":"apps"}'])
+                } else {
+                  Quickshell.execDetached(["omarchy-launch-terminal"])
+                }
+              }
             }
           }
         }
@@ -1729,6 +1826,7 @@ Item {
           model: root.workspaces
 
           WorkspaceCard {
+            id: wsCard
             required property var modelData
 
             width: root.effectiveWsCardWidth
@@ -1739,6 +1837,9 @@ Item {
             focused: root.focusedWorkspaceId !== null
               && Number(root.focusedWorkspaceId) === Number(modelData.id)
             onActivate: function(ws) { root.focusWorkspace(ws) }
+            onContextMenuRequested: function(ws) {
+              root.openWsContextMenu(ws, wsCard.mapToItem(panel, 0, 0))
+            }
           }
         }
 
@@ -1965,6 +2066,105 @@ Item {
                 wsConfigPeel.restart()
               }
             }
+          }
+        }
+      }
+    }
+
+    // ---- Workspace-card context menu ----
+    // Right-click a workspace card: "Move All" (only when the workspace has
+    // a previous one) and "Close All". Any click outside the menu dismisses
+    // it. The strip mask admits this region while the menu is open.
+    MouseArea {
+      anchors.fill: parent
+      z: 11
+      visible: root.wsMenuOpen
+      onClicked: root.closeWsMenu()
+    }
+
+    BorderSurface {
+      id: wsMenuPopup
+      z: 13
+      visible: root.wsMenuOpen
+      x: root.wsMenuX
+      y: root.wsMenuY
+      width: root.wsMenuW
+      height: root.wsMenuH
+      radius: root.cornerRadius
+      color: Util.alpha(Color.popups.background, root.wsOpacity)
+      borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
+
+      HoverHandler {
+        onHoveredChanged: {
+          if (hovered) wsHideTimer.stop()
+          else if (root.workspacesOpened) root.restartWorkspacesHideTimer()
+        }
+      }
+
+      Column {
+        x: root.wsMenuPad
+        y: root.wsMenuPad
+        width: parent.width - root.wsMenuPad * 2
+        spacing: Style.space(2)
+
+        Item {
+          width: parent.width
+          height: root.wsMenuRowH
+          visible: root.wsMenuWsId > 1
+
+          Rectangle {
+            anchors.fill: parent
+            radius: Math.max(1, root.cornerRadius - Style.space(2))
+            color: moveAllArea.containsMouse ? Util.alpha(Color.popups.text, 0.12) : "transparent"
+          }
+
+          Text {
+            anchors.left: parent.left
+            anchors.leftMargin: Style.space(10)
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Move All"
+            textFormat: Text.PlainText
+            font.family: Style.font.family
+            font.pixelSize: Style.font.subtitle
+            color: Color.popups.text
+          }
+
+          MouseArea {
+            id: moveAllArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.runWsMenuAction("move-all", root.wsMenuWsId)
+          }
+        }
+
+        Item {
+          width: parent.width
+          height: root.wsMenuRowH
+
+          Rectangle {
+            anchors.fill: parent
+            radius: Math.max(1, root.cornerRadius - Style.space(2))
+            color: closeAllArea.containsMouse ? Util.alpha(Color.urgent, 0.28) : "transparent"
+          }
+
+          Text {
+            anchors.left: parent.left
+            anchors.leftMargin: Style.space(10)
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Close All"
+            textFormat: Text.PlainText
+            font.family: Style.font.family
+            font.pixelSize: Style.font.subtitle
+            color: closeAllArea.containsMouse ? Color.urgent : Color.popups.text
+          }
+
+          MouseArea {
+            id: closeAllArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.runWsMenuAction("close-all", root.wsMenuWsId)
           }
         }
       }
@@ -2666,6 +2866,7 @@ component GridCell: Item {
     property bool focused: false
 
     signal activate(var ws)
+    signal contextMenuRequested(var ws)
 
     readonly property real previewHeight: Math.round(wcard.width * 9 / 16)
     readonly property real labelHeight: Math.max(Style.space(12), Style.font.caption + Style.space(4))
@@ -2923,7 +3124,11 @@ component GridCell: Item {
         anchors.fill: parent
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
-        onClicked: wcard.activate(wcard.ws)
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        onClicked: {
+          if (mouse.button === Qt.RightButton) wcard.contextMenuRequested(wcard.ws)
+          else wcard.activate(wcard.ws)
+        }
       }
     }
   }

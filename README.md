@@ -24,9 +24,13 @@ single masked, click-through overlay. No window stack, no bloat — one surface,
   edge's width, centered; hover and wander between workspaces. Each card shows
   a live preview with app icons resolved straight from your desktop entries, an
   urgent dot, and a `+` to mint a new workspace. Its distance to the screen
-  bottom is set by `wsStripGap` (a `Gap` slider in the settings popup), and an
-  **apps button** on the strip opens the Omarchy menu straight into the
-  applications list.
+  bottom is set by `wsStripGap` (a `Gap` slider in the settings popup).
+  Right-click a workspace card for a context menu with **Move All** (moves
+  every window of that workspace one workspace back — hidden on the first
+  workspace) and **Close All** (closes every window of that workspace).
+  The **apps button** at the right of the strip opens a terminal with a
+  left-click, and the Omarchy menu straight into the applications list with a
+  right-click.
 - **🧊 Icon panel (bottom-left)** — a compact card nerd-friendly enough to live on:
   - **🕐 A clock** that opens the real menu-bar calendar when clicked.
   - **🔋 Smart icons** — battery (with plug/AC state), Wi-Fi (signal strength),
