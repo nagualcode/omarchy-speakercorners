@@ -30,8 +30,11 @@ single masked, click-through overlay. No window stack, no bloat — one surface,
   workspace) and **Close All** (closes every window of that workspace).
   The **apps button** at the right of the strip opens the Omarchy menu
   straight into the applications list with a left-click and a terminal with a
-  right-click (its grid glyph is `nf-md-apps`; the `nf-oct-apps` Octicons
-  glyph is not present in the installed Nerd Font).
+  right-click. Its glyph is the solid 2×2 grid `fa-th` (U+F00A) drawn from
+  **Font Awesome 7 Free Solid** in the theme accent color — no card
+  background, so it stays a bare, fully-opaque icon that tracks the current
+  theme (a previous `nf-md-apps`/U+F0192 attempt fell back to a clipboard
+  glyph because the installed Nerd Font does not carry it).
 - **🧊 Icon panel (bottom-left)** — a compact card nerd-friendly enough to live on:
   - **🕐 A clock** that opens the real menu-bar calendar when clicked.
   - **🔋 Smart icons** — battery (with plug/AC state), Wi-Fi (signal strength),
@@ -158,8 +161,9 @@ them somewhere.
 
 - **Omarchy** (shell + `omarchy-shell` IPC)
 - **Hyprland** (native `WlrLayershell` + Hyprland IPC)
-- A **Nerd Font** on the system (default: `JetBrainsMono Nerd Font`) for all the
-  fancy glyphs
+- A **Nerd Font** on the system (default: `JetBrainsMono Nerd Font`) for the
+  advanced glyphs
+- **Font Awesome 7 Free** (shipped with Omarchy) for the app-grid launcher icon
 
 ## 🧱 Roof tiles
 

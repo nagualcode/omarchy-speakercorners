@@ -1796,50 +1796,35 @@ Item {
           height: root.wsCardPreviewH + root.wsCardLabelH
           visible: root.workspaces.length > 0
 
-          Rectangle {
+          // Solid app-grid glyph (fa-th, U+F00A) from Font Awesome 7 Free --
+          // the family this strip already falls back to for its icons. No
+          // card background: a bare, fully-opaque accent glyph that stays
+          // readable on any wallpaper. Left opens the applications list,
+          // right opens the terminal.
+          Text {
             anchors.centerIn: parent
-            width: root.effectiveWsCardWidth
-            height: root.wsCardPreviewH
-            radius: root.cornerRadius
+            text: "\uF00A"
+            font.family: "Font Awesome 7 Free"
+            font.weight: Font.Black
+            font.pixelSize: Math.max(16, Math.round(root.effectiveWsCardWidth * 0.36))
             color: appMenuArea.containsMouse
-              ? Util.alpha(Color.popups.text, 0.12)
-              : Util.alpha(Color.popups.text, 0.06)
-            border.width: Math.max(1, Style.space(1))
-            border.color: appMenuArea.containsMouse
-              ? Util.alpha(Color.accent, 0.5)
-              : Util.alpha(Color.popups.text, 0.15)
+              ? Qt.lighter(Color.accent, 1.3)
+              : Color.accent
+          }
 
-            // nf-md-apps (U+F0192) -- the Nerd Font "app grid" glyph. The
-            // nf-oct-apps glyph does not exist in the installed Nerd Font, so
-            // the Material grid is used instead. U+F0192 sits in the
-            // supplementary plane, so it is spelled as a UTF-16 surrogate
-            // pair (\uDB80\uDD92) -- a plain \uF192 would be a different
-            // glyph (fa-outdent). At full opacity against the dim card so the
-            // icon stays clearly visible.
-            Text {
-              anchors.centerIn: parent
-              text: "\uDB80\uDD92"
-              font.family: "JetBrainsMono Nerd Font"
-              font.pixelSize: Math.max(14, Math.round(root.effectiveWsCardWidth * 0.32))
-              color: appMenuArea.containsMouse
-                ? Color.accent
-                : Color.popups.text
-            }
-
-            MouseArea {
-              id: appMenuArea
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              acceptedButtons: Qt.LeftButton | Qt.RightButton
-              // Left opens the applications list (not the full omarchy menu
-              // "root"); right opens the terminal.
-              onClicked: {
-                if (mouse.button === Qt.RightButton) {
-                  Quickshell.execDetached(["omarchy-launch-terminal"])
-                } else {
-                  Quickshell.execDetached(["omarchy-shell", "shell", "toggle", "omarchy.menu", '{"menu":"apps"}'])
-                }
+          MouseArea {
+            id: appMenuArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
+            // Left opens the applications list (not the full omarchy menu
+            // "root"); right opens the terminal.
+            onClicked: {
+              if (mouse.button === Qt.RightButton) {
+                Quickshell.execDetached(["omarchy-launch-terminal"])
+              } else {
+                Quickshell.execDetached(["omarchy-shell", "shell", "toggle", "omarchy.menu", '{"menu":"apps"}'])
               }
             }
           }
