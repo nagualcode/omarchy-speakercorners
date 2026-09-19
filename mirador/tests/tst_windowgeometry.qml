@@ -238,6 +238,116 @@ TestCase {
     verify(fallback.y >= 0 && fallback.y + fallback.height <= 180)
   }
 
+  function test_tiledPreview_singleWindowFillsArea() {
+    var result = WindowGeometry.tiledPreviewGeometry(0, 1, 1880, 1000, 0)
+    compare(result.x, 0)
+    compare(result.y, 0)
+    compare(result.width, 1880)
+    compare(result.height, 1000)
+  }
+
+  function test_tiledPreview_edgeToEdgeColumnsAndRows() {
+    // Two windows side by side share the full row height and span the width.
+    var a = WindowGeometry.tiledPreviewGeometry(0, 2, 1000, 500, 20)
+    var b = WindowGeometry.tiledPreviewGeometry(1, 2, 1000, 500, 20)
+    fuzzyCompare(a.width, 490)
+    fuzzyCompare(b.width, 490)
+    compare(a.height, 500)
+    compare(b.height, 500)
+    fuzzyCompare(b.x - (a.x + a.width), 20)
+    fuzzyCompare(b.x + b.width, 1000)
+
+    // Four windows form a 2x2 grid.
+    var cells = []
+    for (var i = 0; i < 4; i++) cells.push(WindowGeometry.tiledPreviewGeometry(i, 4, 1000, 500, 10))
+    fuzzyCompare(cells[1].x - (cells[0].x + cells[0].width), 10)
+    fuzzyCompare(cells[2].y - (cells[0].y + cells[0].height), 10)
+    compare(cells[1].x, cells[3].x)
+    compare(cells[2].x, cells[0].x)
+    compare(cells[2].y, cells[3].y)
+    compare(cells[0].y, cells[1].y)
+  }
+
+  function test_tiledPreview_noOverlapAnyCount() {
+    var areaW = 1920
+    var areaH = 1080
+    for (var count = 1; count <= 12; count++) {
+      var cells = []
+      for (var i = 0; i < count; i++) cells.push(WindowGeometry.tiledPreviewGeometry(i, count, areaW, areaH, 24))
+      for (var a = 0; a < count; a++) {
+        var ca = cells[a]
+        verify(ca.x >= -0.001, "cell " + a + " x must be inside area")
+        verify(ca.y >= -0.001, "cell " + a + " y must be inside area")
+        verify(ca.x + ca.width <= areaW + 0.001, "cell " + a + " right must be inside area")
+        verify(ca.y + ca.height <= areaH + 0.001, "cell " + a + " bottom must be inside area")
+        verify(ca.width > 0 && ca.height > 0, "cell " + a + " must have positive size")
+        for (var b = a + 1; b < count; b++) {
+          var cb = cells[b]
+          var separated = (ca.x + ca.width <= cb.x + 0.001)
+            || (cb.x + cb.width <= ca.x + 0.001)
+            || (ca.y + ca.height <= cb.y + 0.001)
+            || (cb.y + cb.height <= ca.y + 0.001)
+          verify(separated, "cells " + a + " and " + b + " must not overlap for count " + count)
+        }
+      }
+    }
+  }
+
+  function test_tiledPreview_coversEntireAreaEdgeToEdge() {
+    var areaW = 1880
+    var areaH = 1000
+    for (var count = 1; count <= 10; count++) {
+      var first = WindowGeometry.tiledPreviewGeometry(0, count, areaW, areaH, 16)
+      compare(first.x, 0, "first cell must sit at the area's left edge")
+      compare(first.y, 0, "first cell must sit at the area's top edge")
+
+      // The bottom-most row always reaches the area's bottom edge.
+      var last = WindowGeometry.tiledPreviewGeometry(count - 1, count, areaW, areaH, 16)
+      fuzzyCompare(last.y + last.height, areaH, "bottom-most row must reach the area's bottom edge")
+    }
+
+    // Perfect full grids extend all the way to the right edge with the last real
+    // cell (every row is full).
+    var fullGrids = [2, 4, 6, 9, 12]
+    for (var g = 0; g < fullGrids.length; g++) {
+      var gridCount = fullGrids[g]
+      var last = WindowGeometry.tiledPreviewGeometry(gridCount - 1, gridCount, areaW, areaH, 16)
+      fuzzyCompare(last.x + last.width, areaW, "last cell of a full grid must reach the right edge")
+      fuzzyCompare(last.y + last.height, areaH, "last cell of a full grid must reach the bottom edge")
+    }
+  }
+
+  function test_tiledPreview_orderedLeftToRightTopToBottom() {
+    var cells = []
+    for (var i = 0; i < 6; i++) cells.push(WindowGeometry.tiledPreviewGeometry(i, 6, 900, 600, 20))
+    // Row 0 fills left-to-right, row 1 starts under row 0 at the left edge.
+    fuzzyCompare(cells[1].x - (cells[0].x + cells[0].width), 20)
+    compare(cells[0].y, cells[1].y)
+    compare(cells[0].y, cells[2].y)
+    fuzzyCompare(cells[3].y - (cells[0].y + cells[0].height), 20)
+    compare(cells[3].x, cells[0].x)
+    compare(cells[3].y, cells[4].y)
+    compare(cells[3].y, cells[5].y)
+  }
+
+  function test_tiledPreview_invalidInputsStayFinite() {
+    var none = WindowGeometry.tiledPreviewGeometry(0, 0, 100, 100, 4)
+    compare(none.width, 0)
+    compare(none.height, 0)
+
+    var clamped = WindowGeometry.tiledPreviewGeometry(99, 3, 300, 200, 10)
+    verify(isFinite(clamped.x))
+    verify(isFinite(clamped.y))
+    verify(clamped.width > 0)
+    verify(clamped.height > 0)
+    verify(clamped.x >= 0 && clamped.x + clamped.width <= 300.001)
+    verify(clamped.y >= 0 && clamped.y + clamped.height <= 200.001)
+
+    var bad = WindowGeometry.tiledPreviewGeometry(NaN, -2, NaN, -5, -1)
+    verify(isFinite(bad.x) && isFinite(bad.y))
+    verify(isFinite(bad.width) && isFinite(bad.height))
+  }
+
   function test_previewCanvasUsesNearlyEntireCard() {
     var canvas = WindowGeometry.insetGeometry(520, 335, 4)
     compare(canvas.x, 4)

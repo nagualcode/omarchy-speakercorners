@@ -125,6 +125,20 @@ hyprctl configerrors
 ## What's new
 
 <details>
+<summary><b>Version 2.4.0 — click to reveal all changes</b></summary>
+
+### Single-Workspace Tiled View (Mirage mode "1")
+* **Current-workspace-only summary**: The bottom-right screen corner (see `Speakercorners.qml`, action `"mirador"`) now opens the overview in a new mode "1" that shows just the focused workspace.
+* **Tiling-style no-overlap grid**: Windows are projected into a uniform edge-to-edge grid (`tileWindows`), so every window is fully visible with no overlap (`WindowGeometry.tiledPreviewGeometry`).
+* **Non-destructive by design**: Only the preview projection is tiled — the real Hyprland layout is never altered.
+* **Live focused-workspace tracking**: The view follows the compositor's focused workspace (`singleWorkspaceId`/`singleWorkspaceObject`) so the summary stays truthful under focus changes.
+* **Click to activate & raise**: Clicking a window focuses it by address, raises it to top, and dismisses the overview with the desktop layout untouched.
+* **Inert navigation**: Workspace/wheel/Tab/arrow/keys navigation is disabled — windows are the only interactive targets.
+* **Corner trigger chain**: Bottom-right corner presses cycle closed → mode "1" → mode "2" (full overview) → close. Non-corner entry points (`mirador`, `Shift+Tab`, gestures, other corners) keep the plain toggle.
+
+</details>
+
+<details>
 <summary><b>Version 2.3.0 — click to reveal all changes</b></summary>
 
 ### Carousel Cycle View (Super + Tab)

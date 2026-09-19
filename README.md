@@ -27,6 +27,11 @@ single masked, click-through overlay. No window stack, no bloat — one surface,
   dims the desktop behind it with the same scrim the Omarchy menu uses.
   It is addressed by the `mirador` corner action or `omarchy-shell mirador toggle`.
   Picking a floating window on it brings that window to the top of the stack.
+  Repeated bottom-right corner presses cycle the **Mirage** trigger: first it
+  opens mode "1" (the current workspace only, windows projected into a tiling
+  style no-overlap grid), then mode "2" (the full multi-workspace overview),
+  then closes. Every dismissal path (window click, `Esc`, background click)
+  resets the chain, so the next trigger starts at mode "1" again.
 - **🌆 Floating workspace strip (bottom-center)** — one quarter of the bottom
   edge's width, centered; hover and wander between workspaces. Each card is a
   live preview whose app icons fill the cell (a single app gets the whole tile,

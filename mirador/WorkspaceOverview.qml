@@ -366,6 +366,7 @@ Item {
   property real wheelDeltaAccumulatorY: 0
 
   function handleWheelNavigation(deltaX, deltaY) {
+    if (root.activePresentation === "single") return
     var threshold = 60
     if (Math.abs(deltaY) >= Math.abs(deltaX) && deltaY !== 0) {
       root.wheelDeltaAccumulatorX = 0
@@ -1252,7 +1253,9 @@ Item {
       root.overviewMode = "focused"
     }
 
-    if (payload && (payload.cycleUI === "compact" || payload.cycleUI === "full" || payload.cycleUI === "carousel")) {
+    if (payload && (payload.presentation === "single" || payload.mode === "single")) {
+      root.activePresentation = "single"
+    } else if (payload && (payload.cycleUI === "compact" || payload.cycleUI === "full" || payload.cycleUI === "carousel")) {
       root.activePresentation = payload.cycleUI
     } else if (payload && payload.carousel) {
       root.activePresentation = "carousel"
@@ -1374,6 +1377,43 @@ Item {
   function toggle() {
     if (root.opened) root.dismiss()
     else root.open("{}")
+  }
+
+  // Switch an already-open overview into another presentation without tearing
+  // down the open pipeline (closing frames, releasing captures, re-mapping the
+  // panel). Used by the bottom-right corner trigger to promote the Mirage
+  // viewer from mode "1" (single current workspace) to mode "2" (full
+  // multi-workspace overview).
+  function setPresentation(presentation) {
+    if (!root.opened) return
+    if (presentation !== "single" && presentation !== "full") return
+    root.overviewMode = "normal"
+    root.railScrollY = 0
+    root.pinchTriggered = false
+    root.wheelDeltaAccumulatorX = 0
+    root.wheelDeltaAccumulatorY = 0
+    root.selectedCardIndex = root.initialSelectedCardIndex()
+    root.resetSelectedWindowSelection()
+    root.livePreviewsReady = false
+    root.activePresentation = presentation
+    livePreviewStartTimer.restart()
+    keyCatcher.forceActiveFocus()
+  }
+
+  // ── Single-workspace view (Mirage mode "1") helpers ──────────────────────
+  // The single view always follows the compositor's focused workspace so live
+  // focus changes keep the preview truthful even before dismissal.
+  function singleWorkspaceId() {
+    var focused = Hyprland.focusedWorkspace
+    if (focused && focused.id > 0) return Number(focused.id)
+    if (root.workspaceModel.length > 0 && root.workspaceModel[0] > 0) return root.workspaceModel[0]
+    return 1
+  }
+
+  function singleWorkspaceObject() {
+    var focused = Hyprland.focusedWorkspace
+    if (focused) return focused
+    return root.workspaceById(root.singleWorkspaceId())
   }
 
   // Workspace activation: switches Hyprland active workspace.
@@ -1707,6 +1747,7 @@ Item {
       }
 
       onTabRequested: function(direction) {
+        if (root.activePresentation === "single") return
         if (root.keybindMode === "cycle") {
           root.cycleStep(direction)
         } else {
@@ -1715,6 +1756,7 @@ Item {
       }
 
       onMoveRequested: function(dx, dy) {
+        if (root.activePresentation === "single") return
         if (root.cycled) holdWatchdog.restart()
         if (root.activePresentation !== "carousel" || !root.moveSelectedWindow(dx, dy)) {
           root.moveCardSelection(dx, dy)
@@ -1725,6 +1767,7 @@ Item {
         root.activateSelectedCard()
       }
       onActivateRequested: {
+        if (root.activePresentation === "single") return
         if (keyCatcher.returnHandled) {
           keyCatcher.returnHandled = false
           return
@@ -1734,6 +1777,7 @@ Item {
       onCloseRequested: root.dismiss()
 
       Keys.onPressed: function(event) {
+        if (root.activePresentation === "single") return
         if (root.cycled) holdWatchdog.restart()
         if (event.modifiers & Qt.MetaModifier) {
           root.activeCycleModifier = Qt.MetaModifier
@@ -1848,6 +1892,7 @@ Item {
             width: root.slotWidth(slotIndex)
             height: root.slotHeight(slotIndex)
             visible: {
+              if (root.activePresentation === "single") return false
               if (root.overviewMode !== "focused") return true
               if (slotIndex === (root.selectedCardIndex >= 0 ? root.selectedCardIndex : 0)) return true
               var cy = y
@@ -1859,7 +1904,7 @@ Item {
             workspaceId: modelData
             workspace: root.workspaceById(modelData)
             isSpecial: Boolean(overviewItem && overviewItem.isScratchpad)
-            livePreviews: root.opened && root.livePreviewsReady && panel.visible && root.activePresentation !== "compact" && root.activePresentation !== "carousel"
+            livePreviews: root.opened && root.livePreviewsReady && panel.visible && root.activePresentation !== "compact" && root.activePresentation !== "carousel" && root.activePresentation !== "single"
             draggedToplevel: root.draggedToplevel
             keyboardSelected: slotIndex === root.selectedCardIndex
             focused: Hyprland.focusedWorkspace !== null
@@ -1881,6 +1926,7 @@ Item {
         // ── Temporary Insertion Workspace Cards (Active only during drag) ───────
         Repeater {
           model: root.insertionModel
+          visible: root.activePresentation !== "single"
 
           InsertionWorkspaceCard {
             required property int modelData
@@ -1897,6 +1943,39 @@ Item {
             targetWorkspaceId: modelData
             draggedToplevel: root.draggedToplevel
             onWindowDropped: function(toplevel) { root.moveWindowToWorkspace(toplevel, modelData) }
+          }
+        }
+
+        // ── Single-Workspace Tiled View (Mirage mode "1") ──────────────────────
+        // Shows only the focused workspace, with its windows projected into a
+        // tiling-style edge-to-edge layout so every window is fully visible with
+        // no overlap. The compositor layout is never touched: this is a pure
+        // visual arrangement. Clicking a window activates + raises it and closes
+        // the overview, restoring the original desktop layout untouched.
+        Item {
+          id: singleWorkspaceView
+          anchors.fill: parent
+          visible: root.activePresentation === "single"
+
+          WorkspaceCard {
+            id: singleWorkspaceCard
+            anchors.fill: parent
+            overview: root
+            workspaceId: root.singleWorkspaceId()
+            workspace: root.singleWorkspaceObject()
+            isSpecial: false
+            keyboardSelected: true
+            focused: Hyprland.focusedWorkspace !== null
+            tileWindows: true
+            livePreviews: root.opened && root.livePreviewsReady && panel.visible && root.activePresentation === "single"
+            onWorkspaceActivated: function(occupied) {
+              // In the tiled view the windows are the only interactive targets;
+              // empty-space clicks are inert so the arrangement is never left.
+            }
+            onWindowActivated: function(toplevel) { root.activateWindow(toplevel) }
+            onWindowDragStarted: function(toplevel) { root.beginWindowDrag(toplevel) }
+            onWindowDragFinished: function(toplevel) { root.endWindowDrag(toplevel) }
+            onWindowDropped: function(toplevel) { root.moveWindowToWorkspace(toplevel, root.singleWorkspaceId()) }
           }
         }
       }

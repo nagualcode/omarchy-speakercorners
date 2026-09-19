@@ -90,7 +90,15 @@ This document details the architectural layout, Wayland protocol interactions, Q
   * `previewGeometry`: Projects Hyprland client rectangles into the card preview canvas.
   * `snapToDevicePixels`: Quantizes logical values to physical device pixel boundaries.
   * `overviewGridGeometry`: Calculates optimal column/row matrix to maximize card size.
+  * `tiledPreviewGeometry`: Projects windows into a uniform edge-to-edge tiling grid (balanced columns via `ceil(sqrt(n))`) used by the single-workspace presentation, so every window is fully visible with no overlap.
   * `cyclicCardMove`: Implements 2D cyclic keyboard navigation (global continuous horizontal cycle, spatial nearest-center vertical row movement with top/bottom wrap-around).
+
+### 7. Single-Workspace Tiled Presentation (Mirage mode "1")
+* A dedicated `WorkspaceOverview` presentation (`activePresentation === "single"`) that summarises exactly the *current* workspace, reached via a `payload.presentation === "single"` opening (bottom-right corner first trigger).
+* Renders one `WorkspaceCard` (`singleWorkspaceView`) spanning the full usable area with `tileWindows: true`, driving child previews through `WindowGeometry.tiledPreviewGeometry` — a tiling-style grid with no overlap. The real Hyprland layout is never touched; the arrangement is a pure preview projection (non-destructive invariant).
+* Tracks the compositor's focused workspace via `singleWorkspaceId()`/`singleWorkspaceObject()` so the preview stays truthful under live focus changes.
+* Clicking a window calls the regular `activateWindow()` path (focus by address + `raiseToTop` + dismiss), restoring the original desktop layout untouched.
+* Hides the multi-workspace cards and drag insertion targets, and makes wheel/Tab/arrow/keys navigation inert — windows are the only interactive targets. `setPresentation("single" || "full")` performs tear-free in-place presentation switches.
 
 ### 6. `WindowModel.js`
 * Hyprland group and client resolver:

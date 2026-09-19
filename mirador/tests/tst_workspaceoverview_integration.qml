@@ -877,6 +877,83 @@ TestCase {
       "No carousel selection path may dereference a null card model item")
   }
 
+  function test_singlePresentationPayloadAndStateMachine() {
+    var source = workspaceOverviewSource()
+
+    // open() must route a payload with presentation/mode "single" into the
+    // single-workspace presentation without extra compositor refreshes.
+    verify(/payload\.presentation\s*===\s*"single"|\|\s*payload\.mode\s*===\s*"single"/.test(source),
+      "open() must honor presentation/mode single payload")
+    verify(/function\s+setPresentation\(presentation\)/.test(source),
+      "WorkspaceOverview must expose setPresentation() for in-place presentation switches")
+    verify(/presentation\s*!==\s*"single"\s*&&\s*presentation\s*!==\s*"full"/.test(source),
+      "setPresentation() must reject presentations it cannot switch between")
+
+    // The single-workspace tiled view must be a child of cardsContainer and
+    // drive its WorkspaceCard into tiling mode.
+    verify(/cardsContainer[\s\S]*id\s*:\s*singleWorkspaceView/.test(source),
+      "Single-workspace view must live inside cardsContainer")
+    verify(/id\s*:\s*singleWorkspaceView[\s\S]*visible:\s*root\.activePresentation\s*===\s*"single"/.test(source),
+      "Single-workspace view must be visible only in single presentation")
+    verify(/id\s*:\s*singleWorkspaceCard[\s\S]*tileWindows:\s*true/.test(source),
+      "Single-workspace card must request tiling-style preview geometry")
+    verify(/id\s*:\s*singleWorkspaceCard[\s\S]*onWindowActivated:\s*function\(toplevel\)\s*\{\s*root\.activateWindow\(toplevel\)\s*\}/.test(source),
+      "Clicking a window in single view must activate, raise and dismiss it")
+    verify(/singleWorkspaceCard[\s\S]*root\.singleWorkspaceId\(\)/.test(source),
+      "Single-workspace card must follow the compositor's focused workspace")
+    verify(/function\s+singleWorkspaceId\(\)/.test(source)
+        && /function\s+singleWorkspaceObject\(\)/.test(source),
+      "Single-workspace helpers must resolve the focused workspace")
+  }
+
+  function test_singlePresentationHidesWorkspaceCardsAndInsertionCards() {
+    var source = workspaceOverviewSource()
+
+    // Normal workspace cards must disappear in single presentation (both the
+    // slot visibility and the deferred screencopy stream).
+    verify(/visible:\s*\{\s*if\s*\(root\.activePresentation\s*===\s*"single"\)\s*return\s*false/.test(source),
+      "Workspace cards must be hidden while the single presentation is active")
+    verify(/root\.activePresentation\s*!==\s*"compact"\s*&&\s*root\.activePresentation\s*!==\s*"carousel"\s*&&\s*root\.activePresentation\s*!==\s*"single"/.test(source),
+      "Workspace card live previews must be disabled in single presentation")
+
+    // Insertion drop targets must not render during single presentation.
+    verify(/model:\s*root\.insertionModel[\s\S]*visible:\s*root\.activePresentation\s*!==\s*"single"/.test(source),
+      "Insertion workspace cards must be hidden in single presentation")
+
+    // The single card itself enables live previews only when it is the active
+    // presentation.
+    verify(/tileWindows:\s*true[\s\S]*livePreviews:\s*root\.opened\s*&&\s*root\.livePreviewsReady\s*&&\s*panel\.visible\s*&&\s*root\.activePresentation\s*===\s*"single"/.test(source),
+      "Single-workspace card must defer its live screencopy stream like all other cards")
+  }
+
+  function test_singlePresentationKeyboardGuards() {
+    var source = workspaceOverviewSource()
+
+    // In single presentation most keyboard navigation is inert because the
+    // windows are the only interactive targets.
+    verify(/onTabRequested:\s*function\(direction\)\s*\{\s*if\s*\(root\.activePresentation\s*===\s*"single"\)\s*return/.test(source),
+      "Tab navigation must be inert in single presentation")
+    verify(/onMoveRequested:\s*function\(dx,\s*dy\)\s*\{\s*if\s*\(root\.activePresentation\s*===\s*"single"\)\s*return/.test(source),
+      "Arrow-key navigation must be inert in single presentation")
+    verify(/onActivateRequested:\s*\{\s*if\s*\(root\.activePresentation\s*===\s*"single"\)\s*return/.test(source),
+      "Mode toggle must be inert in single presentation")
+    verify(/Keys\.onPressed:\s*function\(event\)\s*\{\s*if\s*\(root\.activePresentation\s*===\s*"single"\)\s*return/.test(source),
+      "Global workspace key handling must be inert in single presentation")
+    verify(/function\s+handleWheelNavigation\(deltaX,\s*deltaY\)\s*\{\s*if\s*\(root\.activePresentation\s*===\s*"single"\)\s*return/.test(source),
+      "Wheel card navigation must be inert in single presentation")
+    verify(/onReturnRequested:\s*\{\s*keyCatcher\.returnHandled\s*=\s*true\s*root\.activateSelectedCard\(\)/.test(source),
+      "Return must still activate (and thereby dismiss) the single view")
+  }
+
+  function test_workspaceCardTileWindowsDisplayGeometry() {
+    var source = workspaceCardSource()
+
+    verify(/property\s+bool\s+tileWindows:\s*false/.test(source),
+      "WorkspaceCard must expose a tileWindows property defaulting to off")
+    verify(/displayGeometry:\s*root\.tileWindows[\s\S]*WindowGeometry\.tiledPreviewGeometry/.test(source),
+      "displayGeometry must use tiledPreviewGeometry when tileWindows is set")
+  }
+
   function simulateIsSummoningModifier(key, activeMod, configuredMod) {
     var Qt_Key_Meta = 0x01000022
     var Qt_Key_Super_L = 0x01000053

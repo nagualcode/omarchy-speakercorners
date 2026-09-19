@@ -45,6 +45,15 @@ import "IconModel.js" as IconModel
 // The "mirador" action summons the embedded workspace-overview overlay from
 // the ported mirador plugin (see mirador/README.md). The overlay is always
 // kept loaded; its PanelWindow surfaces only while the overview is open.
+//
+// The bottom-right corner cycles the overlay through three states, one trigger
+// per press:
+//   1st trigger → mode "1": the current workspace only, windows laid out in a
+//                tiling-style grid with no overlap (Mirage single view)
+//   2nd trigger → mode "2": the full multi-workspace overview (Mirage overview)
+//   3rd trigger → close
+// Any other dismissal path (window click, Esc, background click) resets the
+// chain, so the next corner trigger starts again at mode "1".
 Item {
   id: root
 
@@ -294,7 +303,7 @@ Item {
       root.toggleAllWindowModes()
       break
     case "mirador":
-      root.toggleMirador()
+      root.triggerMirador(edge)
       break
     case "toggle-hide-chrome":
       root.toggleChromeHidden()
@@ -355,6 +364,37 @@ Item {
 
   function closeMirador() {
     if (miradorLoader.item) miradorLoader.item.dismiss()
+  }
+
+  // ── Bottom-right corner Mirage trigger state machine ─────────────────────
+  // The corner summarises the embedded workspace overview in three states:
+  //   trigger #1 (overview closed)  → mode "1": current workspace only, windows
+  //                                   arranged in a tiling-style no-overlap grid
+  //   trigger #2 (mode "1" active)  → mode "2": the full multi-workspace overview
+  //   trigger #3 (mode "2" active)  → close the overview
+  // Any other dismissal path (clicking a window, Esc, background click) resets
+  // the chain so the next corner trigger starts fresh at mode "1".
+  function triggerMirador(edge) {
+    if (edge === "bottom-right") root.cycleMirador()
+    else root.toggleMirador()
+  }
+
+  function cycleMirador() {
+    var mirador = miradorLoader.item
+    if (!mirador) return
+    if (!mirador.opened) {
+      root.openMiradorSingle()
+      return
+    }
+    if (mirador.activePresentation === "single") {
+      mirador.setPresentation("full")
+      return
+    }
+    mirador.dismiss()
+  }
+
+  function openMiradorSingle() {
+    if (miradorLoader.item) miradorLoader.item.open('{"presentation":"single"}')
   }
 
   // ---- bottom-left hot corner: hide the strip and the menu bar together ----

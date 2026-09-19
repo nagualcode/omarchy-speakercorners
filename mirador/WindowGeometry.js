@@ -612,6 +612,37 @@ function previewGeometry(ipcObject, monitor, screen, areaWidth, areaHeight,
   }
 }
 
+// Tiling-style edge-to-edge layout for the single-workspace overview (Mirage
+// mode "1"). Windows are arranged in a balanced grid with uniform cells and a
+// small gap, so every window is fully visible with no overlap — a static visual
+// projection of what a tiling WM would produce. The compositor layout is never
+// touched; this only drives preview rendering.
+function tiledPreviewGeometry(index, count, areaWidth, areaHeight, spacing) {
+  var safeCount = Math.max(0, Math.floor(finiteNumber(count) || 0))
+  if (safeCount === 0) return { x: 0, y: 0, width: 0, height: 0 }
+
+  var safeWidth = Math.max(1, finiteNumber(areaWidth) || 1)
+  var safeHeight = Math.max(1, finiteNumber(areaHeight) || 1)
+  var gap = Math.max(0, finiteNumber(spacing) || 0)
+  var safeIndex = Math.max(0, Math.min(safeCount - 1, Math.floor(finiteNumber(index) || 0)))
+
+  var columns = Math.max(1, Math.ceil(Math.sqrt(safeCount)))
+  var rows = Math.max(1, Math.ceil(safeCount / columns))
+
+  var cellWidth = Math.max(1, (safeWidth - gap * (columns - 1)) / columns)
+  var cellHeight = Math.max(1, (safeHeight - gap * (rows - 1)) / rows)
+
+  var col = safeIndex % columns
+  var row = Math.floor(safeIndex / columns)
+
+  return {
+    x: Math.min(safeWidth - cellWidth, Math.max(0, col * (cellWidth + gap))),
+    y: Math.min(safeHeight - cellHeight, Math.max(0, row * (cellHeight + gap))),
+    width: cellWidth,
+    height: cellHeight
+  }
+}
+
 // Malformed/unavailable IPC geometry must not make a window disappear. Keep
 // such clients in a compact bottom-right grid without affecting valid clients.
 function fallbackGeometry(index, count, areaWidth, areaHeight, spacing) {

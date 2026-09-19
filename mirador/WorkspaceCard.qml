@@ -18,6 +18,10 @@ BorderSurface {
   property bool livePreviews: false
   property int toplevelRevision: 0
   property bool isSpecial: false
+  // When true, window previews are laid out edge-to-edge in a tiling-style grid
+  // (no overlap) instead of mirroring the real compositor geometry. Used by the
+  // Mirage mode-1 single-workspace view; the live layout is never modified.
+  property bool tileWindows: false
 
   readonly property bool isScratchpad: root.isSpecial
     || WindowModel.isSpecialWorkspace(root.workspace)
@@ -328,10 +332,14 @@ BorderSurface {
             spatialPreview.height,
             Math.min(spatialPreview.width, Math.max(Style.space(56), spatialPreview.width * 0.15)),
             Math.min(spatialPreview.height, Math.max(Style.space(40), spatialPreview.height * 0.20)))
-          readonly property var displayGeometry: previewGeometry.valid
-            ? previewGeometry
-            : WindowGeometry.fallbackGeometry(itemIndex, root.windowCount,
-              spatialPreview.width, spatialPreview.height, root.previewSpacing)
+          readonly property var displayGeometry: root.tileWindows
+            ? WindowGeometry.tiledPreviewGeometry(
+              itemIndex, root.windowCount, spatialPreview.width,
+              spatialPreview.height, root.previewSpacing)
+            : (previewGeometry.valid
+              ? previewGeometry
+              : WindowGeometry.fallbackGeometry(itemIndex, root.windowCount,
+                spatialPreview.width, spatialPreview.height, root.previewSpacing))
 
           readonly property real dpr: (targetMonitor && targetMonitor.scale > 0)
             ? targetMonitor.scale

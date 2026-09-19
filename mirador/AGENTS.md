@@ -52,6 +52,7 @@ mirador/
     ├── tst_gesturehelper.qml  # Pinch gesture threshold & debounce unit tests
     ├── tst_windowpreview_security.qml # Security & capture release tests
     ├── tst_workspaceoverview_integration.qml # Integration & UI tests
+    ├── tst_corner_mirador_modes.qml # Bottom-right corner Mirage trigger state machine
     └── tst_demo_overlay.qml   # Demo overlay unit tests
 ```
 
