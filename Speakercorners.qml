@@ -1339,6 +1339,15 @@ Item {
   property bool geometryRefreshInFlight: false
   property var desktopEntries: []
 
+  // While the Omarchy screensaver (org.omarchy.screensaver) keeps a window on
+  // screen the strip must stay hidden: it would otherwise float over the
+  // blackout (the screensaver parks focus on every monitor in turn, and each of
+  // those focus moves re-shows the pinned strip). Showing is suspended while
+  // any screensaver window exists, and the strip hides the moment one maps.
+  property var screensaverWindows: ({})
+  property bool screensaverUp: false
+  property bool stripShownBeforeScreensaver: false
+
   readonly property int wsLeadingCells: (root.wsShowAppMenu ? 1 : 0) + (root.wsShowOmafile ? 1 : 0)
   // Launcher cells actually visible for the current strip content: the leading
   // apps-menu/omafile cells appear whenever the strip itself can show (always
@@ -1510,6 +1519,7 @@ Item {
   function readyTimerStart() { readyTimer.start() }
 
   function showWorkspaces() {
+    if (root.screensaverUp) return
     var rebuilt = root.modelDirty
     root.ready = true
     if (rebuilt) root.refreshMainModel()
@@ -1642,6 +1652,54 @@ Item {
     onTriggered: root.showWorkspaces()
   }
 
+  // Track the Omarchy screensaver windows (class org.omarchy.screensaver) so
+  // the strip can hide while the blackout is up and restore itself afterwards.
+  function trackScreensaverWindows(event, name) {
+    var fields = []
+    try {
+      if (event && event.parse) fields = event.parse(4) || []
+    } catch (e) {
+      fields = String(event && event.data ? event.data : "").split(",")
+    }
+    if (name === "openwindow" && String(fields[2] || "") === "org.omarchy.screensaver") {
+      var opened = String(fields[0] || "")
+      if (opened && !root.screensaverWindows[opened]) {
+        var after = ({})
+        for (var k in root.screensaverWindows) after[k] = true
+        after[opened] = true
+        root.screensaverWindows = after
+        if (!root.screensaverUp) {
+          root.screensaverUp = true
+          root.stripShownBeforeScreensaver = root.workspacesOpened && !root.chromeHidden
+          root.hideWorkspaces()
+        }
+      }
+      return
+    }
+    if (name === "closewindow") {
+      var closed = String(fields[0] || "")
+      if (!root.screensaverWindows[closed]) return
+      var rest = ({})
+      var any = false
+      for (var a in root.screensaverWindows) {
+        if (a !== closed) {
+          rest[a] = true
+          any = true
+        }
+      }
+      if (any) {
+        root.screensaverWindows = rest
+        return
+      }
+      root.screensaverWindows = ({})
+      if (root.screensaverUp) {
+        root.screensaverUp = false
+        if (root.stripShownBeforeScreensaver) root.showWorkspaces()
+        root.stripShownBeforeScreensaver = false
+      }
+    }
+  }
+
   Connections {
     target: Hyprland
 
@@ -1653,6 +1711,7 @@ Item {
 
     function onRawEvent(event) {
       var name = String(event && event.name ? event.name : "")
+      root.trackScreensaverWindows(event, name)
       if (!root.ready) return
       var geometryEvent = ["movewindow", "moveworkspace", "openwindow", "closewindow", "changefloatingmode", "fullscreen", "pin", "minimize"].indexOf(name) !== -1
       var modelEvent = geometryEvent || name === "renameworkspace" || name === "urgent"
