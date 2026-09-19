@@ -17,9 +17,16 @@ single masked, click-through overlay. No window stack, no bloat — one surface,
 ## 🎯 What it does
 
 - **🖱️ Five hot corners** — park the cursor, let a tiny dwell timer fire: summon
-  the Omarchy menu, toggle the icon panel, toggle the workspace floating strip,
-  toggle the WhatsApp dropdown, or run your own command. Everything else stays
+  the workspace overview, toggle window modes, toggle the icon panel, toggle the
+  workspace floating strip, or run your own command. Everything else stays
   fully click-through.
+- **🗺️ Workspace overview (bottom-right)** — a port of the Mirador workspace
+  overview (`mirador/`), summoned straight from a hot corner. It lifts every
+  workspace onto the screen for visual navigation and window launching, keeps
+  its own full-screen overlay surface (exclusive keyboard focus while open) and
+  dims the desktop behind it with the same scrim the Omarchy menu uses.
+  It is addressed by the `mirador` corner action or `omarchy-shell mirador toggle`.
+  Picking a floating window on it brings that window to the top of the stack.
 - **🌆 Floating workspace strip (bottom-center)** — one quarter of the bottom
   edge's width, centered; hover and wander between workspaces. Each card is a
   live preview whose app icons fill the cell (a single app gets the whole tile,
@@ -27,10 +34,9 @@ single masked, click-through overlay. No window stack, no bloat — one surface,
   workspace. A small triangle at the strip's base points up at the active
   workspace. Its distance to the screen bottom is set by `wsStripGap` (a `Gap`
   slider in the settings popup).
-  By default the icons are drawn as flat, theme-colored glyphs; flip
-  `wsStripRealIcons` (or the **Real icons** toggle in the settings popup) to
-  render the actual, full-color app icons instead — which also drops the tile
-  background/border for a bare, Dock-like look.
+  Workspace cards always render the actual, full-color app icons; the tile
+  background/border is dropped for a bare, Dock-like look
+  (`wsStripRealIcons` is always on — there is no generic glyph fallback).
   The small triangle pointing at the active workspace doubles as its close
   button: hovering turns it into an **×** and clicking closes the workspace
   (every window on it). While it points at the empty/new workspace (`+`) there
@@ -84,19 +90,19 @@ Settings live in the `speakercorners` entry of
   "animations": true,      // false to disable the icon-panel / workspace-strip slide
   "clockFormat": "dddd HH:mm",
   "cardWidth": "auto",     // or a fixed px width
-  "topLeftAction": "command",
-  "topLeftCommand": "omarchy menu",
+  "topLeftAction": "none",
+  "topLeftCommand": "",
   "topRightAction": "toggle-window-modes",
   "topRightCommand": "",
   "bottomLeftAction": "toggle-hide-chrome",
   "bottomLeftCommand": "",
-  "bottomRightAction": "command",
-  "bottomRightCommand": "omarchy-shell io.github.moizibnyousaf.omawhatsapp toggleDropdown '{}'",
+  "bottomRightAction": "mirador",
+  "bottomRightCommand": "",
   "bottomCenterAction": "command",
   "bottomCenterCommand": "omarchy-shell workspace-overview toggle",
   "wsScale": 0.5,           // workspace strip scale (height multiplier)
   "wsStripGap": 21,         // gap between the strip and the screen bottom
-  "wsStripRealIcons": false, // true = real, full-color app icons in the cards
+  "wsStripRealIcons": true, // always real, full-color app icons in the cards
   "floatGridOrder": [
     "action:browser",
     "action:terminal",
@@ -140,10 +146,10 @@ Edit `actionEntries` to change them.
 
 | Key                 | values                                              |
 | ------------------- | --------------------------------------------------- |
-| `topLeftAction`     | `command` / `none` — Omarchy menu toggle by default     |
+| `topLeftAction`     | `command` / `toggle-window-modes` / `none` — disabled by default |
 | `topRightAction`    | `command` / `toggle-window-modes` / `none` — window-mode toggle by default |
 | `bottomLeftAction`  | `command` / `toggle-hide-chrome` / `none` — hide-chrome toggle by default |
-| `bottomRightAction` | `command` / `none` — WhatsApp dropdown by default   |
+| `bottomRightAction` | `command` / `mirador` / `none` — workspace overview by default |
 | `bottomCenterAction`| `command` / `none` — workspace strip by default     |
 
 `toggle-window-modes` cycles the active workspace between everything-tiled

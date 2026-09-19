@@ -35,12 +35,16 @@ import "IconModel.js" as IconModel
 //   "plugins": [
 //     { "id": "speakercorners",
 //       "dwellMs": 139, "targetSize": 8,
-//       "topLeftAction": "command",  "topLeftCommand": "omarchy menu",
-//       "topRightAction": "toggle-window-modes",  "topRightCommand": "",
+//       "topLeftAction": "none",
+//       "topRightAction": "toggle-window-modes",
 //       "bottomLeftAction": "toggle-hide-chrome",  "bottomLeftCommand": "",
-//       "bottomRightAction": "command","bottomRightCommand": "omarchy-shell io.github.moizibnyousaf.omawhatsapp toggleDropdown '{}'",
+//       "bottomRightAction": "mirador",
 //       "bottomCenterAction": "command","bottomCenterCommand": "omarchy-shell workspace-overview toggle" }
 //   ]
+//
+// The "mirador" action summons the embedded workspace-overview overlay from
+// the ported mirador plugin (see mirador/README.md). The overlay is always
+// kept loaded; its PanelWindow surfaces only while the overview is open.
 Item {
   id: root
 
@@ -96,10 +100,10 @@ Item {
   // settings popup slider.
   readonly property int wsStripGapDefault: Math.max(2, Math.round(Style.space(22) * 0.95))
   property int wsStripGap: wsStripGapDefault
-  // When enabled, workspace cards render the real (colorful) app icon image
-  // instead of the flat-colored Nerd Font glyph / monochrome tint. Falls back
-  // to the generic glyph only when no icon image can be resolved.
-  property bool wsStripRealIcons: false
+  // Workspace cards always render the real (colorful) app icon image. The
+  // flat-colored Nerd Font glyph / monochrome tint is disabled and there is no
+  // generic glyph fallback: only real app icons are ever shown.
+  property bool wsStripRealIcons: true
   // Launcher cells of the strip: the apps-menu button, the omafile (file
   // manager) button and the new-workspace "+" button. All shown by default;
   // each can be hidden from the strip's right-click config popup.
@@ -122,10 +126,10 @@ Item {
   }
 
   function actionFor(edge) {
-    if (edge === "top-left") return String(setting("topLeftAction", "command"))
+    if (edge === "top-left") return String(setting("topLeftAction", "none"))
     if (edge === "top-right") return String(setting("topRightAction", "toggle-window-modes"))
     if (edge === "bottom-left") return String(setting("bottomLeftAction", "toggle-hide-chrome"))
-    if (edge === "bottom-right") return String(setting("bottomRightAction", "command"))
+    if (edge === "bottom-right") return String(setting("bottomRightAction", "mirador"))
     if (edge === "bottom-center") return String(setting("bottomCenterAction", "command"))
     return "none"
   }
@@ -162,7 +166,7 @@ Item {
     root.wsToggleEnabled = setting("wsToggleEnabled", true) !== false
     root.wsCardGap = Math.max(0, Math.min(Style.space(64), Number(setting("wsGap", Style.space(10)) || Style.space(10))))
     root.wsStripGap = Math.max(0, Math.min(Style.space(64), Number(setting("wsStripGap", root.wsStripGapDefault) || root.wsStripGapDefault)))
-    root.wsStripRealIcons = setting("wsStripRealIcons", false) === true
+    root.wsStripRealIcons = true
     root.wsShowAppMenu = setting("wsShowAppMenu", true) !== false
     root.wsShowOmafile = setting("wsShowOmafile", true) !== false
     root.wsShowNewWs = setting("wsShowNewWs", true) !== false
@@ -234,6 +238,10 @@ Item {
       if (method === "toggle") { root.toggleWorkspaces() } else if (method === "open") { root.showWorkspaces() } else if (method === "close") { root.hideWorkspaces() } else return false
       return true
     }
+    if (target === "mirador") {
+      if (method === "toggle") { root.toggleMirador() } else if (method === "open" || method === "summon") { root.openMirador() } else if (method === "close" || method === "hide" || method === "dismiss") { root.closeMirador() } else return false
+      return true
+    }
     if (target === "speakercorners") {
       switch (method) {
       case "toggle": root.toggle(); break
@@ -285,6 +293,9 @@ Item {
     case "toggle-window-modes":
       root.toggleAllWindowModes()
       break
+    case "mirador":
+      root.toggleMirador()
+      break
     case "toggle-hide-chrome":
       root.toggleChromeHidden()
       break
@@ -298,6 +309,52 @@ Item {
     root.readConfig()
     if (!root.cornersEnabled) return
     root.trigger(root.actionFor(edge), root.commandFor(edge), edge)
+  }
+
+  // ---- Embedded workspace-overview overlay (ported mirador) ----------------
+  // The workspace-overview gesture ("mirador") is embedded here so this plugin
+  // stays the only surface plugin on the machine. Its own PanelWindow carries
+  // the exclusive keyboard focus while open and an overlay layer-surface of its
+  // own, keeping the corner mask on speakercorners' panel untouched.
+  Loader {
+    id: miradorLoader
+    source: "mirador/WorkspaceOverview.qml"
+    active: true
+    asynchronous: true
+    onLoaded: {
+      console.log("speakercorners: mirador overlay loaded", !!item, item ? item.status : "-")
+      if (!item) return
+      item.omarchyPath = root.omarchyPath
+      // Use a stub manifest so dismiss()'s shell.hide("mirador") stays a
+      // harmless no-op (the mirador plugin is no longer enabled).
+      item.manifest = ({ id: "mirador" })
+      if ("shell" in item) {
+        item.shell = root.shell
+        if (item.shellChanged) item.shellChanged.connect(root.syncMiradorShell)
+      }
+    }
+    onStatusChanged: {
+      console.log("speakercorners: mirador overlay status", status)
+      if (status === Loader.Error)
+        console.warn("speakercorners: embedded mirador overlay failed to load:", errorString())
+    }
+  }
+
+  function syncMiradorShell() {
+    if (miradorLoader.item && "shell" in miradorLoader.item)
+      miradorLoader.item.shell = root.shell
+  }
+
+  function toggleMirador() {
+    if (miradorLoader.item) miradorLoader.item.toggle()
+  }
+
+  function openMirador() {
+    if (miradorLoader.item) miradorLoader.item.open("{}")
+  }
+
+  function closeMirador() {
+    if (miradorLoader.item) miradorLoader.item.dismiss()
   }
 
   // ---- bottom-left hot corner: hide the strip and the menu bar together ----
@@ -1673,6 +1730,22 @@ Item {
     function state(): string { return root.workspacesOpened ? "open" : "closed" }
   }
 
+  // Legacy target so existing commands and keybindings (`omarchy-shell mirador
+  // toggle`) keep driving the embedded workspace-overview overlay.
+  IpcHandler {
+    target: "mirador"
+    function open(payload: string): string { root.openMirador(); return "ok" }
+    function close(): string { root.closeMirador(); return "ok" }
+    function toggle(): string { root.toggleMirador(); return "ok" }
+    function summon(payload: string): string { root.openMirador(); return "ok" }
+    function dismiss(): string { root.closeMirador(); return "ok" }
+    function state(): string {
+      if (!miradorLoader.item) return "loading status=" + miradorLoader.status + " err=" + message(miradorLoader.errorString())
+      return miradorLoader.item.opened ? "open" : "closed"
+    }
+    function message(s: string): string { return String(s || "").replace(/\n/g, " ").slice(0, 120) }
+  }
+
   // ========================================================================
   //  The single masked window
   // ========================================================================
@@ -2207,53 +2280,6 @@ Item {
                 root.wsToggleEnabled = !root.wsToggleEnabled
                 root.persistWorkspaceSettings()
                 root.restartWorkspacesHideTimer()
-                wsConfigPeel.restart()
-              }
-            }
-          }
-        }
-
-        Item {
-          id: realIconsRow
-          width: parent.width
-          height: Style.space(26)
-
-          Text {
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            text: "Real icons"
-            textFormat: Text.PlainText
-            font.family: Style.font.family
-            font.pixelSize: Style.font.caption
-            color: Util.alpha(Color.popups.text, 0.85)
-          }
-
-          Rectangle {
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            width: Style.space(34)
-            height: Style.space(18)
-            radius: height / 2
-            color: root.wsStripRealIcons ? Color.accent : Util.alpha(Color.popups.text, 0.18)
-            Behavior on color { ColorAnimation { duration: 120 } }
-
-            Rectangle {
-              anchors.verticalCenter: parent.verticalCenter
-              x: root.wsStripRealIcons
-                ? parent.width - width - Math.max(2, Style.space(1))
-                : Math.max(2, Style.space(1))
-              width: Style.space(14)
-              height: Style.space(14)
-              radius: width / 2
-              color: "#ffffff"
-              Behavior on x { NumberAnimation { duration: 120 } }
-            }
-
-            MouseArea {
-              anchors.fill: parent
-              onClicked: {
-                root.wsStripRealIcons = !root.wsStripRealIcons
-                root.persistWorkspaceSettings()
                 wsConfigPeel.restart()
               }
             }
@@ -3232,8 +3258,8 @@ component GridCell: Item {
               readonly property var member: modelData.member
               readonly property var entry: wcard.desktopEntry(member)
               // Real-icon mode skips the Nerd Font glyph mapping entirely and
-              // renders the desktop-entry icon at full color; the flat glyph is
-              // only used when no icon image can be resolved.
+              // renders the desktop-entry icon at full color; there is no
+              // generic glyph fallback when no icon image can be resolved.
               readonly property bool useRealIcons: wcard.realIcons === true
               readonly property string mappedGlyph: useRealIcons
                 ? ""
@@ -3241,11 +3267,7 @@ component GridCell: Item {
               readonly property var imageSource: mappedGlyph.length === 0
                 ? wcard.iconSource(member, entry)
                 : ""
-              readonly property bool imageUnavailable: mappedGlyph.length === 0
-                && (String(imageSource).length === 0 || appImage.status === Image.Error)
-              readonly property string glyph: mappedGlyph.length > 0
-                ? mappedGlyph
-                : (imageUnavailable ? IconModel.genericAppGlyph() : "")
+              readonly property string glyph: mappedGlyph
               readonly property int iconPixelRatio: Math.max(1, Math.round(Screen.devicePixelRatio))
 
               width: wcard.iconSize
