@@ -108,11 +108,17 @@ TestCase {
     // raiseToTop must exist as a helper.
     verify(/function\s*raiseToTop\s*\(\s*address\s*\)/.test(source),
       "WorkspaceOverview must expose a raiseToTop(address) helper")
-    // activateWindow must dispatch focus by address and then raise the window.
+    // activateWindow must dispatch focus by address and then schedule the raise.
     verify(/function\s*activateWindow[\s\S]*?hl\.dsp\.focus/.test(source),
       "activateWindow must dispatch focus by address on the Lua path")
-    verify(/hl\.dsp\.focus[\s\S]{0,600}?root\.raiseToTop\(\s*address\s*\)/.test(source),
-      "activateWindow must call raiseToTop(address) after focusing the window")
+    // Focus and raise cannot run back-to-back through Hyprland.dispatch(): the
+    // second dispatch is dropped before its hyprctl subprocess flushes, so the
+    // raise would never land. activateWindow must sequence the raise on a
+    // short single-shot timer instead of calling raiseToTop directly.
+    verify(/hl\.dsp\.focus[\s\S]{0,800}?raiseDelayTimer\.restart\(\)/.test(source),
+      "activateWindow must schedule the raise on raiseDelayTimer after focusing")
+    verify(/id\s*:\s*raiseDelayTimer[\s\S]{0,300}?root\.raiseToTop\(\s*addr\s*\)/.test(source),
+      "raiseDelayTimer must call raiseToTop(addr) when it fires")
     // hyprctl's bring_to_top ignores its window argument, so the raise must
     // travel through alter_zorder with an explicit address on the Lua path.
     verify(/hl\.dsp\.window\.alter_zorder\(\{\s*mode\s*=\s*\\?["']top\\?["']\s*,\s*window\s*=\s*\\?["']address:/ && /alter_zorder/.test(source) && /address:\s*"\s*\+\s*address/.test(source),

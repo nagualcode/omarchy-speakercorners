@@ -143,6 +143,25 @@ Item {
     }
   }
 
+  // Dispatches that land back-to-back through Hyprland.dispatch() race: the
+  // second one is dropped before its hyprctl subprocess has flushed. Firing
+  // focus and then raiseToTop() immediately in activateWindow loses the raise,
+  // so the float sits under its siblings while focused. Sequence the raise on a
+  // short single-shot timer so the compositor has consumed the focus dispatch.
+  property string pendingRaiseAddress: ""
+
+  Timer {
+    id: raiseDelayTimer
+    interval: 160
+    repeat: false
+    onTriggered: {
+      if (!root.pendingRaiseAddress) return
+      var addr = root.pendingRaiseAddress
+      root.pendingRaiseAddress = ""
+      root.raiseToTop(addr)
+    }
+  }
+
   // ── Structural-event debounce ────────────────────────────────────────────────
   // Non-structural Hyprland events (title changes, focus, screencopy activity)
   // arrive at high frequency while a terminal is active. We batch structural
@@ -1488,7 +1507,12 @@ Item {
     // floats, so focusing alone does not always bring it visually to the front
     // (the exact behaviour of a plain mouse click). Raise it by address so the
     // selected window always comes to the surface, regardless of dispatch order.
-    if (address) root.raiseToTop(address)
+    // The two dispatches cannot run back-to-back (the second is dropped), so
+    // the raise is sequenced on raiseDelayTimer.
+    if (address) {
+      pendingRaiseAddress = address
+      raiseDelayTimer.restart()
+    }
     Qt.callLater(root.dismiss) // WINDOW ACTIVATION CLOSES MIRADOR
   }
 
