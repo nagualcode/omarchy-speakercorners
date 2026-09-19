@@ -49,4 +49,16 @@ TestCase {
     verify(/presentation/.test(match[0]) && /"single"/.test(match[0]),
       "openMiradorSingle() must summon the summary view in mode 1")
   }
+
+  function test_miradorIpcExposesCycleAndDiagnose() {
+    var source = speakercornersSource()
+    var target = source.indexOf('target: "mirador"')
+    verify(target !== -1, "Speakercorners must register a mirador IpcHandler")
+    var cycle = source.indexOf('function cycle(): string { root.cycleMirador(); return "ok" }')
+    verify(cycle > target && /function[\s\S]{0,120}cycle[\s\S]{0,120}root\.cycleMirador\(\)/.test(source.slice(target, target + 600)),
+      "mirador IPC must expose cycle() driving the same state machine as the corner")
+    var diagnose = source.indexOf('function diagnose()')
+    verify(diagnose > target && /activePresentation/.test(source.slice(target, diagnose + 500)),
+      "mirador IPC must expose diagnose() reporting opened/presentation")
+  }
 }

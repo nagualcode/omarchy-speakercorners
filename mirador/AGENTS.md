@@ -107,3 +107,27 @@ omarchy-shell shell toggle mirador '{}'
 omarchy-shell shell summon mirador '{"demo":true}'
 omarchy-shell shell hide mirador
 ```
+
+---
+
+## 6. Compiled Component Cache Pitfall
+
+**The shell may run STALE compiled QML.** Precompiled sibling files (`Speakercorners.qmlc`,
+`mirador/WorkspaceOverview.qmlc`) next to a source `.qml` are loaded in preference to the
+source and are NOT invalidated by later source edits. Symptoms: changes never appear at
+runtime, `omarchy-shell mirador diagnose` misses functions that exist in the source, the hot
+reload logs "Local plugin changed, reloading" but serves old bytecode, and `version()` keeps
+returning the old value.
+
+After any code change to `Speakercorners.qml` or the plugin's `.qml` files, verify that no
+stale `.qmlc` siblings exist:
+
+```bash
+find /home/nagual/.config/omarchy/plugins/nagualcode.speakercorners -name "*.qmlc" -delete
+omarchy restart shell
+```
+
+Then confirm with: `omarchy-shell mirador diagnose` (expect `closed presentation=full ...`).
+The plugin root exposes `cycle()` (drives the same single→full→close state machine the
+bottom-right corner uses) and `diagnose()` (`opened`, `presentation`, `overviewMode`,
+`selectedCard`) over IPC for live verification.

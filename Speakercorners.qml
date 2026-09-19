@@ -1836,11 +1836,20 @@ Item {
     function open(payload: string): string { root.openMirador(); return "ok" }
     function close(): string { root.closeMirador(); return "ok" }
     function toggle(): string { root.toggleMirador(); return "ok" }
+    function cycle(): string { root.cycleMirador(); return "ok" }
     function summon(payload: string): string { root.openMirador(); return "ok" }
     function dismiss(): string { root.closeMirador(); return "ok" }
     function state(): string {
       if (!miradorLoader.item) return "loading status=" + miradorLoader.status + " err=" + message(miradorLoader.errorString())
       return miradorLoader.item.opened ? "open" : "closed"
+    }
+    function diagnose(): string {
+      if (!miradorLoader.item) return "loading status=" + miradorLoader.status + " err=" + message(miradorLoader.errorString())
+      var m = miradorLoader.item
+      return (m.opened ? "open" : "closed")
+        + " presentation=" + m.activePresentation
+        + " overviewMode=" + m.overviewMode
+        + " selectedCard=" + m.selectedCardIndex
     }
     function message(s: string): string { return String(s || "").replace(/\n/g, " ").slice(0, 120) }
   }
