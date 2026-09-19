@@ -21,13 +21,20 @@ single masked, click-through overlay. No window stack, no bloat — one surface,
   toggle the WhatsApp dropdown, or run your own command. Everything else stays
   fully click-through.
 - **🌆 Floating workspace strip (bottom-center)** — one quarter of the bottom
-  edge's width, centered; hover and wander between workspaces. Each card shows
-  a live preview with app icons resolved straight from your desktop entries, an
-  urgent dot, and a `+` to mint a new workspace. Its distance to the screen
-  bottom is set by `wsStripGap` (a `Gap` slider in the settings popup).
-  Right-click a workspace card for a context menu with **Move All** (moves
-  every window of that workspace one workspace back — hidden on the first
-  workspace) and **Close All** (closes every window of that workspace).
+  edge's width, centered; hover and wander between workspaces. Each card is a
+  live preview whose app icons fill the cell (a single app gets the whole tile,
+  macOS-Dock style), plus an urgent dot in the corner, and a `+` to mint a new
+  workspace. A small triangle at the strip's base points up at the active
+  workspace. Its distance to the screen bottom is set by `wsStripGap` (a `Gap`
+  slider in the settings popup).
+  By default the icons are drawn as flat, theme-colored glyphs; flip
+  `wsStripRealIcons` (or the **Real icons** toggle in the settings popup) to
+  render the actual, full-color app icons instead — which also drops the tile
+  background/border for a bare, Dock-like look.
+  The small triangle pointing at the active workspace doubles as its close
+  button: hovering turns it into an **×** and clicking closes the workspace
+  (every window on it). While it points at the empty/new workspace (`+`) there
+  is nothing to close, so it stays a plain triangle.
   The **apps button** at the right of the strip opens the Omarchy menu
   straight into the applications list with a left-click and a terminal with a
   right-click. Its glyph is the solid 2×2 grid `fa-th` (U+F00A) drawn from
@@ -89,6 +96,7 @@ Settings live in the `speakercorners` entry of
   "bottomCenterCommand": "omarchy-shell workspace-overview toggle",
   "wsScale": 0.5,           // workspace strip scale (height multiplier)
   "wsStripGap": 21,         // gap between the strip and the screen bottom
+  "wsStripRealIcons": false, // true = real, full-color app icons in the cards
   "floatGridOrder": [
     "action:browser",
     "action:terminal",

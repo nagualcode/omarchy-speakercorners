@@ -96,6 +96,16 @@ Item {
   // settings popup slider.
   readonly property int wsStripGapDefault: Math.max(2, Math.round(Style.space(22) * 0.95))
   property int wsStripGap: wsStripGapDefault
+  // When enabled, workspace cards render the real (colorful) app icon image
+  // instead of the flat-colored Nerd Font glyph / monochrome tint. Falls back
+  // to the generic glyph only when no icon image can be resolved.
+  property bool wsStripRealIcons: false
+  // Launcher cells of the strip: the apps-menu button, the omafile (file
+  // manager) button and the new-workspace "+" button. All shown by default;
+  // each can be hidden from the strip's right-click config popup.
+  property bool wsShowAppMenu: true
+  property bool wsShowOmafile: true
+  property bool wsShowNewWs: true
   // Disabling the bottom-center toggle pins the strip on screen: it no longer
   // waits for a mouse trigger to appear and no longer auto-hides.
   readonly property bool wsAlwaysVisible: !root.wsToggleEnabled
@@ -122,7 +132,7 @@ Item {
 
   function commandFor(edge) {
     if (edge === "top-left") return String(setting("topLeftCommand", ""))
-    if (edge === "top-right") return String(setting("topRightCommand", "hyprctl gloview"))
+    if (edge === "top-right") return String(setting("topRightCommand", ""))
     if (edge === "bottom-left") return String(setting("bottomLeftCommand", ""))
     if (edge === "bottom-right") return String(setting("bottomRightCommand", ""))
     if (edge === "bottom-center") return String(setting("bottomCenterCommand", "omarchy-shell workspace-overview toggle"))
@@ -152,6 +162,10 @@ Item {
     root.wsToggleEnabled = setting("wsToggleEnabled", true) !== false
     root.wsCardGap = Math.max(0, Math.min(Style.space(64), Number(setting("wsGap", Style.space(10)) || Style.space(10))))
     root.wsStripGap = Math.max(0, Math.min(Style.space(64), Number(setting("wsStripGap", root.wsStripGapDefault) || root.wsStripGapDefault)))
+    root.wsStripRealIcons = setting("wsStripRealIcons", false) === true
+    root.wsShowAppMenu = setting("wsShowAppMenu", true) !== false
+    root.wsShowOmafile = setting("wsShowOmafile", true) !== false
+    root.wsShowNewWs = setting("wsShowNewWs", true) !== false
     root.configLoaded = true
   }
 
@@ -388,67 +402,33 @@ Item {
     }
   }
 
-  // ---- Workspace-card context menu -------------------------------------
-  // Right-clicking a workspace card opens a small menu with "Move All"
-  // (moves every window of the workspace one workspace back) and
-  // "Close All". Windows are collected via hyprctl -j clients first, then
-  // each one is dispatched individually (the Lua dispatchers act on one
-  // window at a time, addressed explicitly).
-  property bool wsMenuOpen: false
-  property int wsMenuWsId: -1
-  property int wsMenuX: 0
-  property int wsMenuY: 0
-  readonly property int wsMenuRowH: Style.space(34)
-  readonly property int wsMenuPad: Style.space(8)
-  readonly property int wsMenuW: Style.space(180)
-  readonly property int wsMenuRows: root.wsMenuWsId > 1 ? 2 : 1
-  readonly property int wsMenuH: root.wsMenuPad * 2 + root.wsMenuRows * root.wsMenuRowH
+  // ---- Workspace close (strip arrow) ------------------------------------
+  // The triangle marker under the active workspace card doubles as its close
+  // button: hovering turns it into an "×" and clicking closes every window on
+  // the active workspace, emptying it off the strip. Windows are collected via
+  // hyprctl -j clients first, then each one is dispatched individually (the
+  // Lua dispatchers act on one window at a time, addressed explicitly).
+  property int wsCloseTarget: -1
 
-  property string wsMenuAction: ""
-  property int wsMenuActionWs: -1
+  function closeWorkspace(wsId) {
+    root.wsCloseTarget = Number(wsId)
+    if (!isFinite(root.wsCloseTarget)) return
+    wsCloseProc.running = true
+  }
 
   Process {
-    id: wsMenuClientsProc
+    id: wsCloseProc
     command: ["hyprctl", "-j", "clients"]
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.applyWsMenuAction(text)
+      onStreamFinished: root.applyWsClose(text)
     }
   }
 
-  function openWsContextMenu(ws, point) {
-    if (!ws) return
-    root.closeWsConfig()
-    root.wsMenuWsId = Number(ws.id)
-    var w = root.wsMenuW
-    var h = root.wsMenuH
-    var x = Math.max(0, Math.min(point.x + root.effectiveWsCardWidth / 2 - w / 2, panel.width - w))
-    var y = Math.max(0, point.y - h - Style.space(12))
-    root.wsMenuX = Math.round(x)
-    root.wsMenuY = Math.round(y)
-    root.wsMenuOpen = true
-    wsHideTimer.stop()
-  }
-
-  function closeWsMenu() {
-    if (!root.wsMenuOpen && root.wsMenuAction === "") return
-    root.wsMenuOpen = false
-    root.wsMenuWsId = -1
-  }
-
-  function runWsMenuAction(action, wsId) {
-    root.wsMenuAction = action
-    root.wsMenuActionWs = Number(wsId)
-    root.closeWsMenu()
-    wsMenuClientsProc.running = true
-  }
-
-  function applyWsMenuAction(text) {
-    var action = root.wsMenuAction
-    var wsId = Number(root.wsMenuActionWs)
-    root.wsMenuAction = ""
-    root.wsMenuActionWs = -1
-    if (!action || !isFinite(wsId)) return
+  function applyWsClose(text) {
+    var wsId = root.wsCloseTarget
+    root.wsCloseTarget = -1
+    if (!isFinite(wsId)) return
     var list = []
     try { list = JSON.parse(text || "[]") } catch (e) { return }
     if (!Array.isArray(list)) return
@@ -461,14 +441,8 @@ Item {
       if (/^0x[0-9a-fA-F]+$/.test(addr)) addrs.push(addr)
     }
     for (var j = 0; j < addrs.length; j++) {
-      if (action === "move-all") {
-        var target = wsId - 1
-        var expr = 'hl.dsp.window.move({ workspace = "' + String(target) + '", window = "address:' + addrs[j] + '", follow = false })'
-        Quickshell.execDetached(["hyprctl", "dispatch", expr])
-      } else if (action === "close-all") {
-        var expr = 'hl.dsp.window.close({ window = "address:' + addrs[j] + '" })'
-        Quickshell.execDetached(["hyprctl", "dispatch", expr])
-      }
+      var expr = 'hl.dsp.window.close({ window = "address:' + addrs[j] + '" })'
+      Quickshell.execDetached(["hyprctl", "dispatch", expr])
     }
   }
 
@@ -1012,7 +986,6 @@ Item {
   function toggleWsConfig() { root.wsConfigOpen ? root.closeWsConfig() : root.openWsConfig() }
 
   function openWsConfig() {
-    root.closeWsMenu()
     root.wsConfigOpen = true
     wsConfigPeel.restart()
   }
@@ -1025,12 +998,11 @@ Item {
     root.restartWorkspacesHideTimer()
   }
 
-  // A click anywhere outside the popup dismisses it: settings are saved and
-  // the shell is bounced so they take full effect.
-  function dismissWsConfigAndRestart() {
+  // A click anywhere outside the popup dismisses it: settings are already
+  // live and persisted, so no shell restart is needed.
+  function dismissWsConfig() {
     if (!root.wsConfigOpen) return
     root.closeWsConfig()
-    Quickshell.execDetached(["/usr/share/omarchy/bin/omarchy-restart-shell"])
   }
 
   Timer {
@@ -1042,7 +1014,7 @@ Item {
   }
 
   readonly property int wsConfigPopupW: Style.space(260)
-  readonly property int wsConfigPopupH: Style.space(328)
+  readonly property int wsConfigPopupH: Style.space(470)
   readonly property int wsConfigPopupX: Math.max(0, Math.round(root.stripX + (root.stripW - root.wsConfigPopupW) / 2))
   readonly property int wsConfigPopupY: Math.max(0, root.stripY - root.wsConfigPopupH - Style.space(12))
 
@@ -1064,6 +1036,10 @@ Item {
         cfg.plugins[i].wsToggleEnabled = root.wsToggleEnabled === true
         cfg.plugins[i].wsGap = Math.round(root.wsCardGap)
         cfg.plugins[i].wsStripGap = Math.round(root.wsStripGap)
+        cfg.plugins[i].wsStripRealIcons = root.wsStripRealIcons === true
+        cfg.plugins[i].wsShowAppMenu = root.wsShowAppMenu === true
+        cfg.plugins[i].wsShowOmafile = root.wsShowOmafile === true
+        cfg.plugins[i].wsShowNewWs = root.wsShowNewWs === true
         found = true
       }
     }
@@ -1075,7 +1051,11 @@ Item {
         wsAutoHide: root.wsAutoHide === true,
         wsToggleEnabled: root.wsToggleEnabled === true,
         wsGap: Math.round(root.wsCardGap),
-        wsStripGap: Math.round(root.wsStripGap)
+        wsStripGap: Math.round(root.wsStripGap),
+        wsStripRealIcons: root.wsStripRealIcons === true,
+        wsShowAppMenu: root.wsShowAppMenu === true,
+        wsShowOmafile: root.wsShowOmafile === true,
+        wsShowNewWs: root.wsShowNewWs === true
       })
     }
     return cfg
@@ -1302,11 +1282,22 @@ Item {
   property bool geometryRefreshInFlight: false
   property var desktopEntries: []
 
+  readonly property int wsLeadingCells: (root.wsShowAppMenu ? 1 : 0) + (root.wsShowOmafile ? 1 : 0)
+  // Launcher cells actually visible for the current strip content: the leading
+  // apps-menu/omafile cells appear whenever the strip itself can show (always
+  // visible, or there is at least one workspace card), and the trailing
+  // new-workspace cell only when there are workspace cards.
+  readonly property int wsExtraCards: {
+    var n = root.workspaces.length
+    var lead = (root.wsAlwaysVisible || n > 0) ? root.wsLeadingCells : 0
+    var trail = (n > 0 && root.wsShowNewWs) ? 1 : 0
+    return lead + trail
+  }
+
   readonly property int effectiveWsCardWidth: {
     var wsCount = root.workspaces.length
-    // App-menu button + workspace cards + new-workspace card.
-    var extraCards = wsCount > 0 ? 2 : 0
-    var n = Math.max(1, wsCount + extraCards)
+    // Launcher cells + workspace cards + optional new-workspace cell.
+    var n = Math.max(1, wsCount + root.wsExtraCards)
     var screen = root.activeScreen
     var avail = screen ? screen.width : 1920
     var maxW = Math.floor((avail - root.wsPanelMargin * 2 - root.wsCardGap * (n - 1) - root.wsOuterPad * 2 - 4) / n)
@@ -1318,19 +1309,57 @@ Item {
   readonly property int wsBorderWidth: Math.max(1, Style.space(2))
   readonly property int stripW: {
     var n = root.workspaces.length
-    // App-menu button + workspace cards + new-workspace card.
-    var cards = Math.max(1, n) + (n > 0 ? 2 : 0)
+    // Launcher cells + workspace cards + optional new-workspace cell.
+    var cards = Math.max(1, n) + root.wsExtraCards
     var gaps = Math.max(0, cards - 1)
     return root.effectiveWsCardWidth * cards
       + root.wsCardGap * gaps
       + root.wsOuterPad * 2 + root.wsBorderWidth * 2
   }
   readonly property int stripH: {
-    return root.wsCardPreviewH + root.wsCardLabelH + root.wsOuterPad * 2 + root.wsBorderWidth * 2
+    return root.wsCardPreviewH + root.wsOuterPad * 2 + root.wsBorderWidth * 2
   }
   readonly property int wsCardPreviewH: Math.round(root.effectiveWsCardWidth * 9 / 16)
-  readonly property int wsCardLabelH: Math.max(Style.space(12), Style.font.caption + Style.space(4))
   readonly property int stripX: Math.max(0, Math.floor((panel.width - root.stripW) / 2))
+
+  // Mini triangle marker sitting in the strip's bottom padding, pointing up at
+  // the active workspace card.
+  readonly property int wsArrowH: Style.space(6)
+  readonly property int wsArrowW: root.wsArrowH * 2
+  readonly property int focusedWsIndex: {
+    var id = root.focusedWorkspaceId
+    if (id === null || id === undefined) return -1
+    for (var i = 0; i < root.workspaces.length; i++) {
+      if (Number(root.workspaces[i].id) === Number(id)) return i
+    }
+    return -1
+  }
+  // The arrow only doubles as a close button while it points at an occupied
+  // workspace card: sitting over the "+" (empty / new workspace) there is
+  // nothing to close, so hovering must not turn it into an "×" either.
+  readonly property bool wsArrowCanClose: root.focusedWsIndex >= 0
+  // Absolute x (relative to the strip) of the arrow's centre: the Row is
+  // centred, and every card is effectiveWsCardWidth wide with wsCardGap
+  // between them; workspace i is the (leading cells + i)th cell.
+  readonly property real wsArrowCenterX: {
+    var n = root.workspaces.length
+    if (n <= 0) return -1
+    var cards = n + root.wsLeadingCells + (root.wsShowNewWs ? 1 : 0)
+    var cw = root.effectiveWsCardWidth
+    var gap = root.wsCardGap
+    var rowW = cards * cw + (cards - 1) * gap
+    var rowX = (root.stripW - rowW) / 2
+    if (root.focusedWsIndex >= 0) {
+      // On a used workspace, point at its card.
+      return rowX + (root.wsLeadingCells + root.focusedWsIndex) * (cw + gap) + cw / 2
+    }
+    // On an empty workspace there is no card for it; point at the "+"
+    // new-workspace button (the last cell) so the strip still confirms where
+    // the current workspace sits. With the button hidden there is nowhere to
+    // point, so the arrow stays away.
+    if (!root.wsShowNewWs) return -1
+    return rowX + (root.wsLeadingCells + n) * (cw + gap) + cw / 2
+  }
   readonly property int stripY: Math.max(0, panel.height - root.stripH - root.cardBottomMargin)
 
   // Bar-aware bottom margin so the strip never sits under a bottom bar.
@@ -1414,7 +1443,12 @@ Item {
     root.readyTimerStart()
     root.readConfig()
     root.refreshDesktopEntries()
-    Qt.callLater(function() { root.refreshWidgetEntries() })
+    Qt.callLater(function() {
+      // Guarded: during a hot reload the root object can be re-instantiated
+      // before this delayed call runs, which used to throw "is not a function"
+      // and leave the plugin's interactivity broken until a shell restart.
+      if (typeof root.refreshWidgetEntries === "function") root.refreshWidgetEntries()
+    })
   }
   function readyTimerStart() { readyTimer.start() }
 
@@ -1422,7 +1456,10 @@ Item {
     var rebuilt = root.modelDirty
     root.ready = true
     if (rebuilt) root.refreshMainModel()
-    if (root.workspaces.length === 0) {
+    // The pinned strip (toggle disabled) keeps at least the launcher cell on
+    // screen even while no workspace holds a window; the transient strip has
+    // nothing to display with an empty model.
+    if (root.workspaces.length === 0 && !root.wsAlwaysVisible) {
       if (root.workspacesOpened) root.hideWorkspaces()
       return
     }
@@ -1434,7 +1471,6 @@ Item {
     wsHideTimer.stop()
     wsSettleTimer.stop()
     root.workspacesOpened = false
-    root.closeWsMenu()
     root.closeWsConfig()
     if (root.effectivePanelAnimMs > 0) wsSlideOutTimer.start()
     else root.wsSliding = false
@@ -1456,7 +1492,7 @@ Item {
   function refreshMainModel() {
     root.workspaces = WorkspaceModel.buildWorkspaces()
     root.modelDirty = false
-    if (root.workspacesOpened && root.workspaces.length === 0) root.hideWorkspaces()
+    if (root.workspacesOpened && root.workspaces.length === 0 && !root.wsAlwaysVisible) root.hideWorkspaces()
   }
 
   function requestGeometryRefresh() {
@@ -1500,6 +1536,15 @@ Item {
   // workspace that has at least one window. The new workspace gets the first
   // free numeric ID above the highest occupied one.
   function openNewWorkspace() {
+    // Already sitting on an empty workspace? There's nowhere to jump to, so
+    // the "+" button is a no-op. Without this guard, focusing the very same
+    // workspace never fires a focus-change event and the strip just disappears
+    // (the hide below would never be reverted by the show).
+    var focused = Hyprland.focusedWorkspace
+    var tl = focused ? focused.toplevels : null
+    var focusedCount = (tl && tl.values) ? tl.values.length : 0
+    if (focusedCount === 0) return
+
     var maxUsed = 0
     for (var i = 0; i < root.workspaces.length; i++) {
       var w = root.workspaces[i]
@@ -1511,7 +1556,8 @@ Item {
     var target = maxUsed + 1
     var expr = 'hl.dsp.focus({ workspace = "' + root.luaStringLiteral(String(target)) + '" })'
     Quickshell.execDetached(["hyprctl", "dispatch", expr])
-    root.hideWorkspaces()
+    // No explicit hideWorkspaces(): the focus change re-shows the strip via
+    // onFocusedWorkspaceChanged, so hiding first would only make it flicker.
   }
 
   Timer {
@@ -1655,10 +1701,6 @@ Item {
       Region { x: root.wsConfigPopupX; y: root.wsConfigPopupY; width: root.wsConfigOpen ? root.wsConfigPopupW : 0; height: root.wsConfigOpen ? root.wsConfigPopupH : 0 }
       // fullscreen block while the config popup is open (outside clicks dismiss it)
       Region { x: 0; y: 0; width: root.wsConfigOpen ? panel.width : 0; height: root.wsConfigOpen ? panel.height : 0 }
-      // workspace-card context menu (while open)
-      Region { x: root.wsMenuX; y: root.wsMenuY; width: root.wsMenuOpen ? root.wsMenuW : 0; height: root.wsMenuOpen ? root.wsMenuH : 0 }
-      // fullscreen block while the context menu is open (outside clicks dismiss it)
-      Region { x: 0; y: 0; width: root.wsMenuOpen ? panel.width : 0; height: root.wsMenuOpen ? panel.height : 0 }
       // optional bottom edge (opt-in)
       Region { x: 0; y: root.wsEdgeEnabled ? panel.height - root.wsEdgeHeight : panel.height; width: root.wsEdgeEnabled ? panel.width : 0; height: root.wsEdgeEnabled ? root.wsEdgeHeight : 0 }
     }
@@ -1793,23 +1835,34 @@ Item {
         // the applications list, right-click opens a terminal.
         Item {
           width: root.effectiveWsCardWidth
-          height: root.wsCardPreviewH + root.wsCardLabelH
-          visible: root.workspaces.length > 0
+          height: root.wsCardPreviewH
+          // The pinned strip shows the launcher cell even with no windows on
+          // screen; the transient strip only appears with cards to render.
+          visible: root.wsShowAppMenu && (root.wsAlwaysVisible || root.workspaces.length > 0)
 
           // Solid app-grid glyph (fa-th, U+F00A) from Font Awesome 7 Free --
           // the family this strip already falls back to for its icons. No
-          // card background: a bare, fully-opaque accent glyph that stays
-          // readable on any wallpaper. Left opens the applications list,
-          // right opens the terminal.
+          // card background: a bare, fully-opaque accent glyph that fills the
+          // whole preview cell. Left opens the applications list, right opens
+          // the terminal.
           Text {
-            anchors.centerIn: parent
+            width: root.effectiveWsCardWidth
+            height: root.wsCardPreviewH
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
             text: "\uF00A"
             font.family: "Font Awesome 7 Free"
             font.weight: Font.Black
-            font.pixelSize: Math.max(16, Math.round(root.effectiveWsCardWidth * 0.36))
+            font.pixelSize: root.wsCardPreviewH
             color: appMenuArea.containsMouse
               ? Qt.lighter(Color.accent, 1.3)
               : Color.accent
+            // FA7's glyph ink sits at the top of the em box (~12.5% empty
+            // below), so AlignVCenter still rides high. Nudge down by half
+            // that dead space to optically center the 2x2 grid in the cell.
+            transform: Translate {
+              y: Math.round(root.wsCardPreviewH * 0.0625)
+            }
           }
 
           MouseArea {
@@ -1820,13 +1873,45 @@ Item {
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             // Left opens the applications list (not the full omarchy menu
             // "root"); right opens the terminal.
-            onClicked: {
+            onClicked: function(mouse) {
               if (mouse.button === Qt.RightButton) {
                 Quickshell.execDetached(["omarchy-launch-terminal"])
               } else {
                 Quickshell.execDetached(["omarchy-shell", "shell", "toggle", "omarchy.menu", '{"menu":"apps"}'])
               }
             }
+          }
+        }
+
+        Item {
+          width: root.effectiveWsCardWidth
+          height: root.wsCardPreviewH
+          visible: root.wsShowOmafile && (root.wsAlwaysVisible || root.workspaces.length > 0)
+
+          Text {
+            width: root.effectiveWsCardWidth
+            height: root.wsCardPreviewH
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            text: "\uF07B"
+            font.family: "Font Awesome 7 Free"
+            font.weight: Font.Black
+            font.pixelSize: root.wsCardPreviewH
+            color: omafileArea.containsMouse
+              ? Qt.lighter(Color.accent, 1.3)
+              : Color.accent
+            transform: Translate {
+              y: Math.round(root.wsCardPreviewH * 0.0625)
+            }
+          }
+
+          MouseArea {
+            id: omafileArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            acceptedButtons: Qt.LeftButton
+            onClicked: Quickshell.execDetached(["omarchy-shell", "shell", "toggle", "xyzlab.omafile", "{}"])
           }
         }
 
@@ -1842,19 +1927,17 @@ Item {
             ws: modelData
             shell: root.shell
             desktopEntries: root.desktopEntries
+            realIcons: root.wsStripRealIcons
             focused: root.focusedWorkspaceId !== null
               && Number(root.focusedWorkspaceId) === Number(modelData.id)
             onActivate: function(ws) { root.focusWorkspace(ws) }
-            onContextMenuRequested: function(ws) {
-              root.openWsContextMenu(ws, wsCard.mapToItem(panel, 0, 0))
-            }
           }
         }
 
         Item {
           width: root.effectiveWsCardWidth
-          height: root.wsCardPreviewH + root.wsCardLabelH
-          visible: root.workspaces.length > 0
+          height: root.wsCardPreviewH
+          visible: root.wsShowNewWs && root.workspaces.length > 0
 
           Rectangle {
             anchors.centerIn: parent
@@ -1885,6 +1968,59 @@ Item {
           }
         }
       }
+
+      // Mini triangle marker in the strip's bottom padding, centred under the
+      // active workspace card and pointing up at it. It doubles as the close
+      // button for the active workspace: hovering turns it into an "×" and a
+      // click closes the workspace (and every window on it).
+      Item {
+        id: wsArrow
+        visible: root.workspacesOpened && root.wsArrowCenterX >= 0
+        width: root.wsArrowW
+        height: root.wsArrowH
+        x: Math.round(root.wsArrowCenterX - root.wsArrowW / 2)
+        y: root.stripH - root.wsArrowH - root.wsBorderWidth - Style.space(1)
+
+        // A square rotated 45°; clipping the lower half leaves a clean
+        // upward-pointing triangle.
+        Item {
+          anchors.fill: parent
+          clip: true
+          visible: !wsArrowHover.containsMouse || !root.wsArrowCanClose
+
+          Rectangle {
+            width: root.wsArrowH * Math.SQRT2
+            height: root.wsArrowH * Math.SQRT2
+            color: Color.accent
+            rotation: 45
+            x: root.wsArrowH - width / 2
+            y: root.wsArrowH - height / 2
+          }
+        }
+
+        // Close-affordance "×" shown while the pointer is over the marker (and
+        // only when there is an actual workspace to close).
+        Text {
+          anchors.centerIn: parent
+          anchors.verticalCenterOffset: Math.round(-root.wsArrowH * 0.5)
+          visible: wsArrowHover.containsMouse && root.wsArrowCanClose
+          text: "\u2715"
+          textFormat: Text.PlainText
+          font.family: root.fontFamily
+          font.pixelSize: Math.ceil(root.wsArrowH * 2.4)
+          font.bold: true
+          color: Color.urgent
+        }
+
+        MouseArea {
+          id: wsArrowHover
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          enabled: root.wsArrowCanClose
+          onClicked: root.closeWorkspace(root.focusedWorkspaceId)
+        }
+      }
     }
 
     // ---- Workspaces configuration popup ----
@@ -1892,12 +2028,12 @@ Item {
     // shell.json when the popup closes; the strip's mask admits this region
     // only while it is open.
     // Transparent catcher while the popup is open: any click outside it
-    // dismisses (saves + restarts the shell).
+    // dismisses (settings are live-applied and saved on close).
     MouseArea {
       anchors.fill: parent
       z: 10
       visible: root.wsConfigOpen
-      onClicked: root.dismissWsConfigAndRestart()
+      onClicked: root.dismissWsConfig()
     }
 
     BorderSurface {
@@ -2076,103 +2212,84 @@ Item {
             }
           }
         }
-      }
-    }
-
-    // ---- Workspace-card context menu ----
-    // Right-click a workspace card: "Move All" (only when the workspace has
-    // a previous one) and "Close All". Any click outside the menu dismisses
-    // it. The strip mask admits this region while the menu is open.
-    MouseArea {
-      anchors.fill: parent
-      z: 11
-      visible: root.wsMenuOpen
-      onClicked: root.closeWsMenu()
-    }
-
-    BorderSurface {
-      id: wsMenuPopup
-      z: 13
-      visible: root.wsMenuOpen
-      x: root.wsMenuX
-      y: root.wsMenuY
-      width: root.wsMenuW
-      height: root.wsMenuH
-      radius: root.cornerRadius
-      color: Util.alpha(Color.popups.background, root.wsOpacity)
-      borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
-
-      HoverHandler {
-        onHoveredChanged: {
-          if (hovered) wsHideTimer.stop()
-          else if (root.workspacesOpened) root.restartWorkspacesHideTimer()
-        }
-      }
-
-      Column {
-        x: root.wsMenuPad
-        y: root.wsMenuPad
-        width: parent.width - root.wsMenuPad * 2
-        spacing: Style.space(2)
 
         Item {
+          id: realIconsRow
           width: parent.width
-          height: root.wsMenuRowH
-          visible: root.wsMenuWsId > 1
-
-          Rectangle {
-            anchors.fill: parent
-            radius: Math.max(1, root.cornerRadius - Style.space(2))
-            color: moveAllArea.containsMouse ? Util.alpha(Color.popups.text, 0.12) : "transparent"
-          }
+          height: Style.space(26)
 
           Text {
             anchors.left: parent.left
-            anchors.leftMargin: Style.space(10)
             anchors.verticalCenter: parent.verticalCenter
-            text: "Move All"
+            text: "Real icons"
             textFormat: Text.PlainText
             font.family: Style.font.family
-            font.pixelSize: Style.font.subtitle
-            color: Color.popups.text
+            font.pixelSize: Style.font.caption
+            color: Util.alpha(Color.popups.text, 0.85)
           }
 
-          MouseArea {
-            id: moveAllArea
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.runWsMenuAction("move-all", root.wsMenuWsId)
+          Rectangle {
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            width: Style.space(34)
+            height: Style.space(18)
+            radius: height / 2
+            color: root.wsStripRealIcons ? Color.accent : Util.alpha(Color.popups.text, 0.18)
+            Behavior on color { ColorAnimation { duration: 120 } }
+
+            Rectangle {
+              anchors.verticalCenter: parent.verticalCenter
+              x: root.wsStripRealIcons
+                ? parent.width - width - Math.max(2, Style.space(1))
+                : Math.max(2, Style.space(1))
+              width: Style.space(14)
+              height: Style.space(14)
+              radius: width / 2
+              color: "#ffffff"
+              Behavior on x { NumberAnimation { duration: 120 } }
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              onClicked: {
+                root.wsStripRealIcons = !root.wsStripRealIcons
+                root.persistWorkspaceSettings()
+                wsConfigPeel.restart()
+              }
+            }
           }
         }
 
-        Item {
+        MiniToggle {
           width: parent.width
-          height: root.wsMenuRowH
-
-          Rectangle {
-            anchors.fill: parent
-            radius: Math.max(1, root.cornerRadius - Style.space(2))
-            color: closeAllArea.containsMouse ? Util.alpha(Color.urgent, 0.28) : "transparent"
+          label: "Apps menu icon"
+          checked: root.wsShowAppMenu
+          onToggled: function(v) {
+            root.wsShowAppMenu = v
+            root.persistWorkspaceSettings()
+            wsConfigPeel.restart()
           }
+        }
 
-          Text {
-            anchors.left: parent.left
-            anchors.leftMargin: Style.space(10)
-            anchors.verticalCenter: parent.verticalCenter
-            text: "Close All"
-            textFormat: Text.PlainText
-            font.family: Style.font.family
-            font.pixelSize: Style.font.subtitle
-            color: closeAllArea.containsMouse ? Color.urgent : Color.popups.text
+        MiniToggle {
+          width: parent.width
+          label: "File manager icon"
+          checked: root.wsShowOmafile
+          onToggled: function(v) {
+            root.wsShowOmafile = v
+            root.persistWorkspaceSettings()
+            wsConfigPeel.restart()
           }
+        }
 
-          MouseArea {
-            id: closeAllArea
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.runWsMenuAction("close-all", root.wsMenuWsId)
+        MiniToggle {
+          width: parent.width
+          label: "New workspace icon"
+          checked: root.wsShowNewWs
+          onToggled: function(v) {
+            root.wsShowNewWs = v
+            root.persistWorkspaceSettings()
+            wsConfigPeel.restart()
           }
         }
       }
@@ -2865,44 +2982,99 @@ component GridCell: Item {
     }
   }
 
+  component MiniToggle: Item {
+    id: mt
+
+    property string label: ""
+    property bool checked: false
+    signal toggled(bool value)
+
+    implicitHeight: Style.space(26)
+
+    Text {
+      anchors.left: parent.left
+      anchors.verticalCenter: parent.verticalCenter
+      text: mt.label
+      textFormat: Text.PlainText
+      font.family: Style.font.family
+      font.pixelSize: Style.font.caption
+      color: Util.alpha(Color.popups.text, 0.85)
+    }
+
+    Rectangle {
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      width: Style.space(34)
+      height: Style.space(18)
+      radius: height / 2
+      color: mt.checked ? Color.accent : Util.alpha(Color.popups.text, 0.18)
+      Behavior on color { ColorAnimation { duration: 120 } }
+
+      Rectangle {
+        anchors.verticalCenter: parent.verticalCenter
+        x: mt.checked
+          ? parent.width - width - Math.max(2, Style.space(1))
+          : Math.max(2, Style.space(1))
+        width: Style.space(14)
+        height: Style.space(14)
+        radius: width / 2
+        color: "#ffffff"
+        Behavior on x { NumberAnimation { duration: 120 } }
+      }
+
+      MouseArea {
+        anchors.fill: parent
+        cursorShape: Qt.PointingHandCursor
+        onClicked: {
+          mt.checked = !mt.checked
+          mt.toggled(mt.checked)
+        }
+      }
+    }
+  }
+
   component WorkspaceCard: Item {
     id: wcard
 
     required property var ws
     property var shell: null
     property var desktopEntries: []
+    property bool realIcons: false
     property bool focused: false
 
     signal activate(var ws)
-    signal contextMenuRequested(var ws)
 
     readonly property real previewHeight: Math.round(wcard.width * 9 / 16)
-    readonly property real labelHeight: Math.max(Style.space(12), Style.font.caption + Style.space(4))
 
-    readonly property color focusedBorder: Color.accent
+    readonly property color focusedBorder: wcard.realIcons ? "transparent" : Color.accent
     readonly property color idleBorder: "transparent"
     readonly property color borderColor: wcard.focused ? focusedBorder : idleBorder
     readonly property int borderWidth: Math.max(2, Style.space(2))
 
-    readonly property string label: wcard.ws ? String(wcard.ws.label || wcard.ws.id) : ""
-
-    readonly property color previewBackground: wcard.focused ? Color.foreground : Color.background
-    readonly property color previewForeground: wcard.focused ? Color.background : Color.popups.text
+    // With real icons the card is a bare, background-free tile (macOS-Dock
+    // style); selection is shown by the strip's triangle marker instead.
+    readonly property color previewBackground: wcard.realIcons
+      ? "transparent"
+      : (wcard.focused ? Color.foreground : Color.background)
+    readonly property color previewForeground: wcard.realIcons
+      ? Color.popups.text
+      : (wcard.focused ? Color.background : Color.popups.text)
     readonly property color imageTint: {
       var tint = IconModel.fallbackIconTint(wcard.previewForeground, wcard.previewBackground)
       return Qt.rgba(tint.r, tint.g, tint.b, tint.a)
     }
 
-    readonly property int iconMaxSize: Style.space(24)
-    readonly property int iconGap: Style.space(4)
-    readonly property int iconPad: Style.space(5)
+    // Let the icons grow to fill the whole preview cell. A single app gets the
+    // full height/width; multiple apps are packed as large as they fit.
+    readonly property int iconGap: Math.max(1, Style.space(2))
+    readonly property int iconPad: wcard.appCount <= 1 ? 0 : Math.max(1, Style.space(2))
 
     readonly property var appList: wcard.buildAppList(wcard.ws)
     readonly property int appCount: wcard.appList.length
 
     readonly property int iconColumns: {
       var n = wcard.appCount
-      if (n <= 0) return 1
+      if (n <= 1) return 1
       var w = Math.max(1, wcardPreview.width - wcard.iconPad * 2)
       var h = Math.max(1, wcardPreview.height - wcard.iconPad * 2)
       return Math.max(1, Math.ceil(Math.sqrt(n * (w / h))))
@@ -2911,6 +3083,7 @@ component GridCell: Item {
     readonly property int iconSize: {
       var n = wcard.appCount
       if (n <= 0) return 0
+      if (n === 1) return Math.max(1, Math.floor(Math.min(wcardPreview.width, wcardPreview.height)))
       var w = Math.max(1, wcardPreview.width - wcard.iconPad * 2)
       var h = Math.max(1, wcardPreview.height - wcard.iconPad * 2)
       var cols = wcard.iconColumns
@@ -2919,7 +3092,7 @@ component GridCell: Item {
         (w - (cols - 1) * wcard.iconGap) / cols,
         (h - (rows - 1) * wcard.iconGap) / rows
       ))
-      return Math.max(10, Math.min(wcard.iconMaxSize, size))
+      return Math.max(6, size)
     }
 
     function buildAppList(ws) {
@@ -3015,7 +3188,7 @@ component GridCell: Item {
       return ""
     }
 
-    implicitHeight: wcard.previewHeight + wcard.labelHeight + wcard.borderWidth * 2
+    implicitHeight: wcard.previewHeight + wcard.borderWidth * 2
     implicitWidth: wcard.width
 
     BorderSurface {
@@ -3023,9 +3196,9 @@ component GridCell: Item {
       anchors.top: parent.top
       anchors.horizontalCenter: parent.horizontalCenter
       width: wcard.width
-      height: wcard.previewHeight + wcard.labelHeight + wcard.borderWidth * 2
+      height: wcard.previewHeight + wcard.borderWidth * 2
       radius: Style.cornerRadius
-      color: Util.alpha(Color.background, 0.6)
+      color: wcard.realIcons ? "transparent" : Util.alpha(Color.background, 0.6)
       borderSpec: Border.flat(wcard.borderColor, wcard.borderWidth)
       clip: true
 
@@ -3058,7 +3231,13 @@ component GridCell: Item {
               required property var modelData
               readonly property var member: modelData.member
               readonly property var entry: wcard.desktopEntry(member)
-              readonly property string mappedGlyph: IconModel.appGlyph(member, entry)
+              // Real-icon mode skips the Nerd Font glyph mapping entirely and
+              // renders the desktop-entry icon at full color; the flat glyph is
+              // only used when no icon image can be resolved.
+              readonly property bool useRealIcons: wcard.realIcons === true
+              readonly property string mappedGlyph: useRealIcons
+                ? ""
+                : IconModel.appGlyph(member, entry)
               readonly property var imageSource: mappedGlyph.length === 0
                 ? wcard.iconSource(member, entry)
                 : ""
@@ -3095,7 +3274,7 @@ component GridCell: Item {
                 source: appIcon.imageSource
                 layer.enabled: visible
                 layer.effect: MultiEffect {
-                  colorization: 1.0
+                  colorization: appIcon.useRealIcons ? 0.0 : 1.0
                   colorizationColor: wcard.imageTint
                 }
               }
@@ -3104,39 +3283,25 @@ component GridCell: Item {
         }
       }
 
-      RowLayout {
-        anchors.top: wcardPreview.bottom
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.topMargin: Style.space(1)
-        spacing: Style.space(4)
-
-        Text {
-          text: wcard.label
-          textFormat: Text.PlainText
-          font.family: Style.font.family
-          font.pixelSize: Style.font.caption
-          font.bold: wcard.focused
-          color: wcard.focused ? Color.accent : Util.alpha(Color.popups.text, 0.7)
-        }
-
-        Rectangle {
-          visible: wcard.ws && wcard.ws.urgent
-          width: Style.space(5)
-          height: Style.space(5)
-          radius: width / 2
-          color: Color.urgent
-        }
+      // Urgent marker: a small dot in the card's top-right corner. The old
+      // per-card workspace number is gone; focus is shown by the strip arrow.
+      Rectangle {
+        visible: wcard.ws && wcard.ws.urgent
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: Math.max(2, Style.space(3))
+        width: Math.max(4, Style.space(6))
+        height: width
+        radius: width / 2
+        color: Color.urgent
       }
 
       MouseArea {
         anchors.fill: parent
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
-        acceptedButtons: Qt.LeftButton | Qt.RightButton
-        onClicked: {
-          if (mouse.button === Qt.RightButton) wcard.contextMenuRequested(wcard.ws)
-          else wcard.activate(wcard.ws)
-        }
+        acceptedButtons: Qt.LeftButton
+        onClicked: wcard.activate(wcard.ws)
       }
     }
   }
