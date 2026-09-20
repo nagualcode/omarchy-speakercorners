@@ -179,6 +179,7 @@ Item {
     root.wsShowAppMenu = setting("wsShowAppMenu", true) !== false
     root.wsShowOmafile = setting("wsShowOmafile", true) !== false
     root.wsShowNewWs = setting("wsShowNewWs", true) !== false
+    root.wsNeonEnabled = setting("wsNeonEnabled", false) !== false
     root.configLoaded = true
   }
 
@@ -670,6 +671,72 @@ Item {
   readonly property color cardBorder: Color.accent
   readonly property color cardText: Color.popups.text
 
+  // ========================================================================
+  //  NEON GLOW (workspace strip)
+  // ========================================================================
+  // When enabled, the strip outline and the apps-menu glyph cycle through the
+  // same three colors as the Neonmarchy plugin (CSS `acid 5s linear infinite`):
+  // #5BC5AA -> #B272E1 -> #72B6E1, sampled smoothly around the clock by a
+  // lightweight in-QML Timer (no hyprctl, no config writes).
+  property bool wsNeonEnabled: false
+  property color wsNeonGlow: Color.accent
+  property string neonColorA: "#5BC5AA"
+  property string neonColorB: "#B272E1"
+  property string neonColorC: "#72B6E1"
+  property int neonCycleMs: 5000
+  property int neonTickMs: 50
+
+  // Live theme colors the strip draws with, swapped for the neon glow while
+  // the effect is on.
+  readonly property color wsStripAccent: root.wsNeonEnabled ? root.wsNeonGlow : Color.accent
+  readonly property color wsStripBorder: root.wsNeonEnabled ? root.wsNeonGlow : Color.popups.border
+
+  function neonHex2(v) {
+    var s = Math.max(0, Math.min(255, Math.round(v))).toString(16)
+    return s.length < 2 ? "0" + s : s
+  }
+
+  function neonParseHex(hex) {
+    return {
+      r: parseInt(hex.slice(1, 3), 16),
+      g: parseInt(hex.slice(3, 5), 16),
+      b: parseInt(hex.slice(5, 7), 16)
+    }
+  }
+
+  function neonLerpHex(a, b, t) {
+    return root.neonHex2(a.r + (b.r - a.r) * t)
+      + root.neonHex2(a.g + (b.g - a.g) * t)
+      + root.neonHex2(a.b + (b.b - a.b) * t)
+  }
+
+  function neonColorAt(nowMs) {
+    var a = root.neonParseHex(root.neonColorA)
+    var b = root.neonParseHex(root.neonColorB)
+    var c = root.neonParseHex(root.neonColorC)
+    var t = (nowMs % root.neonCycleMs) / root.neonCycleMs
+    if (t < 1 / 3)      return root.neonLerpHex(a, b, t * 3)
+    if (t < 2 / 3)      return root.neonLerpHex(b, c, (t - 1 / 3) * 3)
+    return root.neonLerpHex(c, a, (t - 2 / 3) * 3)
+  }
+
+  function neonTick() {
+    if (!root.wsNeonEnabled) return
+    var c = root.neonColorAt(Date.now())
+    root.wsNeonGlow = Qt.rgba(
+      parseInt(c.substr(0, 2), 16) / 255,
+      parseInt(c.substr(2, 2), 16) / 255,
+      parseInt(c.substr(4, 2), 16) / 255, 1)
+  }
+
+  Timer {
+    id: neonTimer
+    interval: root.neonTickMs
+    repeat: true
+    running: root.wsNeonEnabled
+    onTriggered: root.neonTick()
+  }
+
   // ---- Widgets that never appear in the floatbar ----
   readonly property var removedWidgetIds: [
     "omarchy.keyboard-layout",
@@ -1111,7 +1178,7 @@ Item {
   }
 
   readonly property int wsConfigPopupW: Style.space(260)
-  readonly property int wsConfigPopupH: Style.space(470)
+  readonly property int wsConfigPopupH: Style.space(504)
   readonly property int wsConfigPopupX: Math.max(0, Math.round(root.stripX + (root.stripW - root.wsConfigPopupW) / 2))
   readonly property int wsConfigPopupY: Math.max(0, root.stripY - root.wsConfigPopupH - Style.space(12))
 
@@ -1137,6 +1204,7 @@ Item {
         cfg.plugins[i].wsShowAppMenu = root.wsShowAppMenu === true
         cfg.plugins[i].wsShowOmafile = root.wsShowOmafile === true
         cfg.plugins[i].wsShowNewWs = root.wsShowNewWs === true
+        cfg.plugins[i].wsNeonEnabled = root.wsNeonEnabled === true
         found = true
       }
     }
@@ -1152,7 +1220,8 @@ Item {
         wsStripRealIcons: root.wsStripRealIcons === true,
         wsShowAppMenu: root.wsShowAppMenu === true,
         wsShowOmafile: root.wsShowOmafile === true,
-        wsShowNewWs: root.wsShowNewWs === true
+        wsShowNewWs: root.wsShowNewWs === true,
+        wsNeonEnabled: root.wsNeonEnabled === true
       })
     }
     return cfg
@@ -1982,7 +2051,9 @@ Item {
       height: root.stripH
       radius: root.cornerRadius
       color: Util.alpha(Color.popups.background, root.wsOpacity)
-      borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
+      borderSpec: root.wsNeonEnabled
+        ? Border.flat(root.wsNeonGlow, Math.max(1, Style.space(2)))
+        : Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
 
       Behavior on y {
         NumberAnimation { duration: root.effectivePanelAnimMs; easing.type: Easing.OutCubic }
@@ -2036,8 +2107,8 @@ Item {
             font.weight: Font.Black
             font.pixelSize: root.wsCardPreviewH
             color: appMenuArea.containsMouse
-              ? Qt.lighter(Color.accent, 1.3)
-              : Color.accent
+              ? Qt.lighter(root.wsStripAccent, 1.3)
+              : root.wsStripAccent
             // FA7's glyph ink sits at the top of the em box (~12.5% empty
             // below), so AlignVCenter still rides high. Nudge down by half
             // that dead space to optically center the 2x2 grid in the cell.
@@ -2391,6 +2462,17 @@ Item {
                 wsConfigPeel.restart()
               }
             }
+          }
+        }
+
+        MiniToggle {
+          width: parent.width
+          label: "Neon glow"
+          checked: root.wsNeonEnabled
+          onToggled: function(v) {
+            root.wsNeonEnabled = v
+            root.persistWorkspaceSettings()
+            wsConfigPeel.restart()
           }
         }
 
