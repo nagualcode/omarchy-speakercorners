@@ -21,6 +21,14 @@ TestCase {
     return request.responseText
   }
 
+  function currentWorkspaceWindowsSource() {
+    var request = new XMLHttpRequest()
+    request.open("GET", Qt.resolvedUrl("../CurrentWorkspaceWindows.qml"), false)
+    request.send()
+    verify(request.status === 0 || request.status === 200)
+    return request.responseText
+  }
+
   function workspaceInsertionCardSource() {
     var request = new XMLHttpRequest()
     request.open("GET", Qt.resolvedUrl("../InsertionWorkspaceCard.qml"), false)
@@ -887,7 +895,7 @@ TestCase {
     var source = workspaceOverviewSource()
 
     // open() must route a payload with presentation/mode "single" into the
-    // single-workspace presentation without extra compositor refreshes.
+    // current-workspace window viewer without extra compositor refreshes.
     verify(/payload\.presentation\s*===\s*"single"|\|\s*payload\.mode\s*===\s*"single"/.test(source),
       "open() must honor presentation/mode single payload")
     verify(/function\s+setPresentation\(presentation\)/.test(source),
@@ -895,21 +903,116 @@ TestCase {
     verify(/presentation\s*!==\s*"single"\s*&&\s*presentation\s*!==\s*"full"/.test(source),
       "setPresentation() must reject presentations it cannot switch between")
 
-    // The single-workspace tiled view must be a child of cardsContainer and
-    // drive its WorkspaceCard into tiling mode.
+    // The viewer must live inside cardsContainer so it inherits the safe area,
+    // and be visible only in the single presentation.
     verify(/cardsContainer[\s\S]*id\s*:\s*singleWorkspaceView/.test(source),
-      "Single-workspace view must live inside cardsContainer")
+      "Current-workspace view must live inside cardsContainer")
     verify(/id\s*:\s*singleWorkspaceView[\s\S]*visible:\s*root\.activePresentation\s*===\s*"single"/.test(source),
-      "Single-workspace view must be visible only in single presentation")
-    verify(/id\s*:\s*singleWorkspaceCard[\s\S]*tileWindows:\s*true/.test(source),
-      "Single-workspace card must request tiling-style preview geometry")
-    verify(/id\s*:\s*singleWorkspaceCard[\s\S]*onWindowActivated:\s*function\(toplevel\)\s*\{\s*root\.activateWindow\(toplevel\)\s*\}/.test(source),
+      "Current-workspace view must be visible only in single presentation")
+    verify(/id\s*:\s*singleWorkspaceView[\s\S]*CurrentWorkspaceWindows/.test(source)
+        || /CurrentWorkspaceWindows\s*\{[\s\S]*?id\s*:\s*singleWorkspaceView/.test(source),
+      "The single presentation must render CurrentWorkspaceWindows, not a WorkspaceCard")
+    verify(!/id\s*:\s*singleWorkspaceCard/.test(source),
+      "The single presentation must no longer instantiate a parent workspace card")
+    verify(/id\s*:\s*singleWorkspaceView[\s\S]*onWindowActivated:\s*function\(toplevel\)\s*\{\s*root\.activateWindow\(toplevel\)\s*\}/.test(source),
       "Clicking a window in single view must activate, raise and dismiss it")
-    verify(/singleWorkspaceCard[\s\S]*root\.singleWorkspaceId\(\)/.test(source),
-      "Single-workspace card must follow the compositor's focused workspace")
+    verify(/singleWorkspaceView[\s\S]*root\.singleWorkspaceId\(\)/.test(source),
+      "The view must follow the compositor's focused workspace")
     verify(/function\s+singleWorkspaceId\(\)/.test(source)
         && /function\s+singleWorkspaceObject\(\)/.test(source),
       "Single-workspace helpers must resolve the focused workspace")
+  }
+
+  function test_singlePresentationStartsPreviewsWithoutDeferral() {
+    var source = workspaceOverviewSource()
+    var view = source.slice(source.indexOf("id: singleWorkspaceView"))
+    view = view.slice(0, view.indexOf("\n        }"))
+
+    // The viewer shows previews only, so its screencopy streams must not wait
+    // for the deferred livePreviewsReady first-paint timer.
+    var binding = /livePreviews:[^\n]*/.exec(view)
+    verify(binding !== null, "The current-workspace viewer must declare a livePreviews binding")
+    verify(/root\.opened\s*&&\s*root\.activePresentation\s*===\s*"single"/.test(binding[0]),
+      "The current-workspace viewer must start live previews on the first frame")
+    verify(!/livePreviewsReady/.test(binding[0]),
+      "The current-workspace viewer must not defer its previews behind livePreviewsReady")
+  }
+
+  function test_currentWorkspaceViewHasNoCardChrome() {
+    var source = currentWorkspaceWindowsSource()
+
+    // The whole point of the view: no parent workspace grid, no number badge,
+    // no card surface, and no grid solver driving the previews.
+    verify(!/\bWorkspaceCard\s*\{/.test(source),
+      "CurrentWorkspaceWindows must not instantiate a WorkspaceCard")
+    verify(!/BorderSurface/.test(source),
+      "CurrentWorkspaceWindows must not use the card surface")
+    verify(!/workspaceBadgeText/.test(source),
+      "CurrentWorkspaceWindows must not render a workspace-number badge")
+    verify(!/cardHeader/.test(source) && !/id\s*:\s*badge\b/.test(source),
+      "CurrentWorkspaceWindows must not render a card header/badge")
+    verify(!/tiledPreviewGeometry/.test(source),
+      "CurrentWorkspaceWindows must not lay previews out in a grid")
+    verify(/WindowGeometry\.snapToDevicePixels/.test(source),
+      "CurrentWorkspaceWindows must snap preview geometry to device pixels")
+  }
+
+  function test_currentWorkspaceViewArrangesWindowsLikeExpose() {
+    var source = currentWorkspaceWindowsSource()
+
+    // Neither a mirror of the desktop nor a grid of equal slots: floating
+    // windows that overlap on the workspace would hide each other in a mirror
+    // and the user could not click the one underneath. Exposé packs them.
+    verify(!/WindowGeometry\.previewGeometry/.test(source),
+      "CurrentWorkspaceWindows must not mirror the desktop layout (overlapping floats would hide each other)")
+    verify(!/WindowGeometry\.fallbackGeometry/.test(source),
+      "CurrentWorkspaceWindows must not park unusable clients in a corner grid")
+    verify(/WindowGeometry\.expoLayout/.test(source),
+      "CurrentWorkspaceWindows must arrange the workspace with the Exposé solver")
+    verify(/WindowGeometry\.clientGeometry/.test(source),
+      "CurrentWorkspaceWindows must derive the arrangement from the real window sizes")
+
+    // One arrangement for the whole workspace: every preview takes the cell that
+    // belongs to its own index, so re-solving never reorders the survivors.
+    verify(/readonly property var layout[\s\S]*WindowGeometry\.expoLayout/.test(source),
+      "CurrentWorkspaceWindows must solve a single layout for the whole workspace")
+    verify(/function rectFor\(index\)/.test(source)
+        && /return cells\[index\]/.test(source),
+      "Each preview must take the cell of its own index")
+    verify(/displayGeometry:\s*spatialPreview\.rectFor\(itemIndex\)/.test(source),
+      "Preview geometry must come from the Exposé cell, not from a per-window projection")
+    verify(/function naturalSizeOf\(preview\)/.test(source)
+        && /if\s*\(!client\)\s*return\s*\{ width: 16, height: 10 \}/.test(source),
+      "A client with unusable IPC geometry must still get a cell so it never disappears")
+  }
+
+  function test_currentWorkspaceViewDisablesIconPlaceholderAndDrag() {
+    var source = currentWorkspaceWindowsSource()
+
+    verify(/showIconFallback:\s*false/.test(source),
+      "CurrentWorkspaceWindows must disable the app-icon placeholder")
+    verify(/allowDrag:\s*false/.test(source),
+      "CurrentWorkspaceWindows must disable window drag (no drop targets in this view)")
+    verify(/liveCaptureEnabled:\s*root\.livePreviews\s*&&\s*root\.visible/.test(source),
+      "Previews must be released as soon as the view is hidden")
+    verify(/WindowModel\.syncPreviewDelegates/.test(source) && /previewMap/.test(source),
+      "CurrentWorkspaceWindows must use incremental delegate pooling")
+    verify(!/Repeater\s*\{[^}]*model\s*:\s*[^}]*effectiveToplevels/.test(source),
+      "CurrentWorkspaceWindows must not bind a Repeater directly to effectiveToplevels")
+  }
+
+  function test_currentWorkspaceViewEmptyStateAndModel() {
+    var source = currentWorkspaceWindowsSource()
+
+    verify(/visible:\s*!root\.occupied/.test(source),
+      "The view must show an empty state when the workspace has no windows")
+    verify(/no windows on this workspace/.test(source),
+      "The empty state must be an explicit hint, not the old card dot")
+    verify(/WindowModel\.resolveWorkspacePreviews/.test(source),
+      "The view must resolve grouped windows through the shared model")
+    verify(/onActiveToplevelChanged[\s\S]*?toplevelRevision\+\+/.test(source)
+        && /onLastIpcObjectChanged[\s\S]*?toplevelRevision\+\+/.test(source),
+      "The view must re-project previews when IPC geometry refreshes")
   }
 
   function test_singlePresentationHidesWorkspaceCardsAndInsertionCards() {
@@ -925,11 +1028,6 @@ TestCase {
     // Insertion drop targets must not render during single presentation.
     verify(/model:\s*root\.insertionModel[\s\S]*visible:\s*root\.activePresentation\s*!==\s*"single"/.test(source),
       "Insertion workspace cards must be hidden in single presentation")
-
-    // The single card itself enables live previews only when it is the active
-    // presentation.
-    verify(/tileWindows:\s*true[\s\S]*livePreviews:\s*root\.opened\s*&&\s*root\.livePreviewsReady\s*&&\s*panel\.visible\s*&&\s*root\.activePresentation\s*===\s*"single"/.test(source),
-      "Single-workspace card must defer its live screencopy stream like all other cards")
   }
 
   function test_singlePresentationKeyboardGuards() {
@@ -951,13 +1049,15 @@ TestCase {
       "Return must still activate (and thereby dismiss) the single view")
   }
 
-  function test_workspaceCardTileWindowsDisplayGeometry() {
+  function test_workspaceCardHasNoTilingMode() {
     var source = workspaceCardSource()
 
-    verify(/property\s+bool\s+tileWindows:\s*false/.test(source),
-      "WorkspaceCard must expose a tileWindows property defaulting to off")
-    verify(/displayGeometry:\s*root\.tileWindows[\s\S]*WindowGeometry\.tiledPreviewGeometry/.test(source),
-      "displayGeometry must use tiledPreviewGeometry when tileWindows is set")
+    verify(!/tileWindows/.test(source),
+      "WorkspaceCard must not expose a tiling-mode branch (previews always mirror real geometry)")
+    verify(!/tiledPreviewGeometry/.test(source),
+      "WorkspaceCard must not reference the removed tiling solver")
+    verify(/displayGeometry:\s*previewGeometry\.valid[\s\S]*?WindowGeometry\.fallbackGeometry/.test(source),
+      "displayGeometry must fall back from real geometry only when IPC geometry is unusable")
   }
 
   function simulateIsSummoningModifier(key, activeMod, configuredMod) {

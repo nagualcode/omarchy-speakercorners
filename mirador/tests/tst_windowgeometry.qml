@@ -238,114 +238,274 @@ TestCase {
     verify(fallback.y >= 0 && fallback.y + fallback.height <= 180)
   }
 
-  function test_tiledPreview_singleWindowFillsArea() {
-    var result = WindowGeometry.tiledPreviewGeometry(0, 1, 1880, 1000, 0)
+  // The current-workspace viewer projects windows through previewGeometry, so
+  // the arrangement mirrors the real desktop instead of being packed into a
+  // grid. These tests lock in the free placement: uniform shared scale, real
+  // relative order, overlap preserved, everything clamped inside the area.
+  function test_freeProjection_singleWindowFillsArea() {
+    var result = WindowGeometry.previewGeometry(
+      { at: [100, -900], size: [1600, 900] }, monitor, screen, 2880, 1620, 0, 0)
+    verify(result.valid)
     compare(result.x, 0)
     compare(result.y, 0)
-    compare(result.width, 1880)
-    compare(result.height, 1000)
+    compare(result.width, 2880)
+    compare(result.height, 1620)
   }
 
-  function test_tiledPreview_edgeToEdgeColumnsAndRows() {
-    // Two windows side by side share the full row height and span the width.
-    var a = WindowGeometry.tiledPreviewGeometry(0, 2, 1000, 500, 20)
-    var b = WindowGeometry.tiledPreviewGeometry(1, 2, 1000, 500, 20)
-    fuzzyCompare(a.width, 490)
-    fuzzyCompare(b.width, 490)
-    compare(a.height, 500)
-    compare(b.height, 500)
-    fuzzyCompare(b.x - (a.x + a.width), 20)
-    fuzzyCompare(b.x + b.width, 1000)
-
-    // Four windows form a 2x2 grid.
-    var cells = []
-    for (var i = 0; i < 4; i++) cells.push(WindowGeometry.tiledPreviewGeometry(i, 4, 1000, 500, 10))
-    fuzzyCompare(cells[1].x - (cells[0].x + cells[0].width), 10)
-    fuzzyCompare(cells[2].y - (cells[0].y + cells[0].height), 10)
-    compare(cells[1].x, cells[3].x)
-    compare(cells[2].x, cells[0].x)
-    compare(cells[2].y, cells[3].y)
-    compare(cells[0].y, cells[1].y)
+  function test_freeProjection_keepsRealRelativePlacement() {
+    // Left half and right half of the monitor keep their left/right order, and
+    // the same uniform scale applies to both.
+    var left = WindowGeometry.previewGeometry(
+      { at: [100, -900], size: [800, 900] }, monitor, screen, 800, 450, 0, 0)
+    var right = WindowGeometry.previewGeometry(
+      { at: [900, -900], size: [800, 900] }, monitor, screen, 800, 450, 0, 0)
+    verify(left.valid && right.valid)
+    fuzzyCompare(left.scale, right.scale)
+    verify(left.x + left.width <= right.x + 0.001,
+      "left window must stay left of the right window")
+    fuzzyCompare(right.x - (left.x + left.width), 0)
   }
 
-  function test_tiledPreview_noOverlapAnyCount() {
-    var areaW = 1920
-    var areaH = 1080
-    for (var count = 1; count <= 12; count++) {
-      var cells = []
-      for (var i = 0; i < count; i++) cells.push(WindowGeometry.tiledPreviewGeometry(i, count, areaW, areaH, 24))
-      for (var a = 0; a < count; a++) {
-        var ca = cells[a]
-        verify(ca.x >= -0.001, "cell " + a + " x must be inside area")
-        verify(ca.y >= -0.001, "cell " + a + " y must be inside area")
-        verify(ca.x + ca.width <= areaW + 0.001, "cell " + a + " right must be inside area")
-        verify(ca.y + ca.height <= areaH + 0.001, "cell " + a + " bottom must be inside area")
-        verify(ca.width > 0 && ca.height > 0, "cell " + a + " must have positive size")
-        for (var b = a + 1; b < count; b++) {
-          var cb = cells[b]
-          var separated = (ca.x + ca.width <= cb.x + 0.001)
-            || (cb.x + cb.width <= ca.x + 0.001)
-            || (ca.y + ca.height <= cb.y + 0.001)
-            || (cb.y + cb.height <= ca.y + 0.001)
-          verify(separated, "cells " + a + " and " + b + " must not overlap for count " + count)
-        }
+  // previewGeometry is the *faithful* projection: it keeps the desktop exactly
+  // as it is, overlaps included, and is what workspace cards and the cycle views
+  // use. The current-workspace viewer does not want that, it wants Exposé.
+  function test_freeProjection_preservesOverlap() {
+    // Two heavily overlapping windows still overlap in the projection: a
+    // faithful mirror must not push them apart.
+    var a = WindowGeometry.previewGeometry(
+      { at: [200, -800], size: [900, 700] }, monitor, screen, 1600, 900, 0, 0)
+    var b = WindowGeometry.previewGeometry(
+      { at: [400, -700], size: [900, 700] }, monitor, screen, 1600, 900, 0, 0)
+    verify(a.valid && b.valid)
+    var overlapX = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)
+    var overlapY = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y)
+    verify(overlapX > 0 && overlapY > 0,
+      "overlapping windows must keep overlapping in a faithful projection")
+  }
+
+  function test_freeProjection_everyWindowStaysInsideArea() {
+    var areaW = 1600
+    var areaH = 900
+    var rects = [
+      { at: [100, -900], size: [1600, 900] },
+      { at: [-1400, -1800], size: [1600, 1000] },
+      { at: [1650, -950], size: [400, 300] },
+      { at: [300, -700], size: [200, 150] }
+    ]
+    for (var i = 0; i < rects.length; i++) {
+      var g = WindowGeometry.previewGeometry(rects[i], monitor, screen, areaW, areaH, 0, 0)
+      verify(g.valid, "rect " + i + " must resolve to a valid geometry")
+      verify(g.x >= -0.001, "rect " + i + " x must stay inside the area")
+      verify(g.y >= -0.001, "rect " + i + " y must stay inside the area")
+      verify(g.x + g.width <= areaW + 0.001, "rect " + i + " right must stay inside the area")
+      verify(g.y + g.height <= areaH + 0.001, "rect " + i + " bottom must stay inside the area")
+      verify(g.width > 0 && g.height > 0, "rect " + i + " must have a positive size")
+    }
+  }
+
+  function test_freeProjection_minimumSizeGrowsAroundCenter() {
+    // A tiny window is grown to the minimum size around its own center, so the
+    // preview keeps pointing at the place the window actually occupies.
+    var tiny = WindowGeometry.previewGeometry(
+      { at: [880, -465], size: [40, 30] }, monitor, screen, 1600, 900, 120, 90)
+    verify(tiny.valid)
+    compare(tiny.width, 120)
+    compare(tiny.height, 90)
+    // The full-monitor window covers the whole area, so its center is the
+    // center of the area; the grown tiny window must land on the same center.
+    var full = WindowGeometry.previewGeometry(
+      { at: [100, -900], size: [1600, 900] }, monitor, screen, 1600, 900, 0, 0)
+    compare(full.x, 0)
+    compare(full.y, 0)
+    fuzzyCompare(tiny.x + tiny.width / 2, full.x + full.width / 2)
+    fuzzyCompare(tiny.y + tiny.height / 2, full.y + full.height / 2)
+  }
+
+  // ── Exposé arrangement ─────────────────────────────────────────────────────
+  // The current-workspace viewer does not mirror the desktop (floating windows
+  // would pile up on each other) and it is not a grid either. It packs the
+  // windows like macOS Exposé: everything visible, nothing overlapping, every
+  // preview keeping its real aspect ratio.
+  function assertExpoInvariants(cells, sizes, areaWidth, areaHeight, label) {
+    compare(cells.length, sizes.length)
+    for (var i = 0; i < cells.length; i++) {
+      var cell = cells[i]
+      verify(cell.width > 0 && cell.height > 0,
+        label + ": cell " + i + " must have a positive size")
+      verify(cell.x >= -0.001 && cell.y >= -0.001,
+        label + ": cell " + i + " must start inside the area")
+      verify(cell.x + cell.width <= areaWidth + 0.001,
+        label + ": cell " + i + " must end inside the area")
+      verify(cell.y + cell.height <= areaHeight + 0.001,
+        label + ": cell " + i + " must end inside the area")
+      var expectedAspect = sizes[i].width / sizes[i].height
+      var actualAspect = cell.width / cell.height
+      verify(Math.abs(actualAspect - expectedAspect) / expectedAspect < 0.01,
+        label + ": cell " + i + " must keep aspect " + expectedAspect
+        + ", got " + actualAspect)
+    }
+    for (var a = 0; a < cells.length; a++) {
+      for (var b = a + 1; b < cells.length; b++) {
+        var first = cells[a]
+        var second = cells[b]
+        var overlapX = Math.min(first.x + first.width, second.x + second.width)
+          - Math.max(first.x, second.x)
+        var overlapY = Math.min(first.y + first.height, second.y + second.height)
+          - Math.max(first.y, second.y)
+        verify(!(overlapX > 0.001 && overlapY > 0.001),
+          label + ": cells " + a + " and " + b + " must never overlap")
       }
     }
   }
 
-  function test_tiledPreview_coversEntireAreaEdgeToEdge() {
-    var areaW = 1880
-    var areaH = 1000
-    for (var count = 1; count <= 10; count++) {
-      var first = WindowGeometry.tiledPreviewGeometry(0, count, areaW, areaH, 16)
-      compare(first.x, 0, "first cell must sit at the area's left edge")
-      compare(first.y, 0, "first cell must sit at the area's top edge")
+  function test_expoLayout_withoutWindowsProducesNoCells() {
+    compare(WindowGeometry.expoLayout([], 0, 0, 1600, 900, 12).length, 0)
+    compare(WindowGeometry.expoLayout(null, 0, 0, 1600, 900, 12).length, 0)
+  }
 
-      // The bottom-most row always reaches the area's bottom edge.
-      var last = WindowGeometry.tiledPreviewGeometry(count - 1, count, areaW, areaH, 16)
-      fuzzyCompare(last.y + last.height, areaH, "bottom-most row must reach the area's bottom edge")
+  function test_expoLayout_singleWindowIsAspectFittedAndCentered() {
+    var sizes = [{ width: 1600, height: 900 }]
+    var cells = WindowGeometry.expoLayout(sizes, 0, 0, 1000, 1000, 12)
+    assertExpoInvariants(cells, sizes, 1000, 1000, "single window")
+    // 16:9 inside a square: full width, letterboxed vertically and centered.
+    fuzzyCompare(cells[0].x, 0)
+    fuzzyCompare(cells[0].width, 1000)
+    fuzzyCompare(cells[0].height, 562.5)
+    fuzzyCompare(cells[0].y, 218.75)
+  }
+
+  function test_expoLayout_twoWindowsBecomeSideBySideColumns() {
+    var sizes = [{ width: 1600, height: 900 }, { width: 1600, height: 900 }]
+    var cells = WindowGeometry.expoLayout(sizes, 0, 0, 1600, 900, 12)
+    assertExpoInvariants(cells, sizes, 1600, 900, "two windows")
+
+    // Landscape area + landscape group: two columns separated by the gap, each
+    // window letterboxed and centered in its own column.
+    fuzzyCompare(cells[0].x, 0)
+    fuzzyCompare(cells[0].width, 794)
+    fuzzyCompare(cells[1].x, 806)
+    fuzzyCompare(cells[1].width, 794)
+    fuzzyCompare(cells[1].x - (cells[0].x + cells[0].width), 12)
+    fuzzyCompare(cells[0].height, 446.625)
+    fuzzyCompare(cells[0].y, 226.6875)
+  }
+
+  function test_expoLayout_resolvesDesktopOverlapRegression() {
+    // The reported bug: two floating windows overlap on the workspace, so the
+    // faithful projection renders them on top of each other and the user cannot
+    // pick the one underneath.
+    var overlappingA = { width: 1200, height: 800 }
+    var overlappingB = { width: 1200, height: 800 }
+    var localMonitor = { name: "test", x: 0, y: 0, width: 1600, height: 900, scale: 1 }
+    var localScreen = { name: "test", width: 1600, height: 900 }
+    var projectedA = WindowGeometry.previewGeometry(
+      { at: [0, 0], size: [1200, 800] }, localMonitor, localScreen, 1600, 900, 0, 0)
+    var projectedB = WindowGeometry.previewGeometry(
+      { at: [300, 90], size: [1200, 800] }, localMonitor, localScreen, 1600, 900, 0, 0)
+    var overlapX = Math.min(projectedA.x + projectedA.width, projectedB.x + projectedB.width)
+      - Math.max(projectedA.x, projectedB.x)
+    var overlapY = Math.min(projectedA.y + projectedA.height, projectedB.y + projectedB.height)
+      - Math.max(projectedA.y, projectedB.y)
+    verify(overlapX > 0 && overlapY > 0,
+      "the faithful projection must reproduce the desktop overlap")
+
+    var sizes = [overlappingA, overlappingB]
+    var cells = WindowGeometry.expoLayout(sizes, 0, 0, 1600, 900, 12)
+    assertExpoInvariants(cells, sizes, 1600, 900, "overlapping pair")
+    verify(cells[1].x >= cells[0].x + cells[0].width,
+      "Exposé must pull the overlapping windows apart so both stay clickable")
+  }
+
+  function test_expoLayout_neverOverlapsMixedAspects() {
+    var sizes = [
+      { width: 1920, height: 1080 },
+      { width: 800, height: 1200 },
+      { width: 500, height: 200 },
+      { width: 900, height: 900 },
+      { width: 640, height: 480 },
+      { width: 3840, height: 1080 },
+      { width: 300, height: 900 }
+    ]
+    var cells = WindowGeometry.expoLayout(sizes, 0, 0, 1600, 900, 12)
+    assertExpoInvariants(cells, sizes, 1600, 900, "mixed aspects")
+  }
+
+  function test_expoLayout_neverOverlapsManyWindowsOnATallArea() {
+    var sizes = []
+    for (var i = 0; i < 9; i++)
+      sizes.push({ width: 800 + (i % 3) * 400, height: 600 + (i % 4) * 200 })
+    var cells = WindowGeometry.expoLayout(sizes, 0, 0, 1000, 1800, 10)
+    assertExpoInvariants(cells, sizes, 1000, 1800, "nine windows on a tall area")
+  }
+
+  function test_expoLayout_givesTheLargerWindowTheLargerShare() {
+    var sizes = [{ width: 1600, height: 900 }, { width: 400, height: 300 }]
+    var cells = WindowGeometry.expoLayout(sizes, 0, 0, 1600, 900, 12)
+    assertExpoInvariants(cells, sizes, 1600, 900, "big and small")
+    var bigArea = cells[0].width * cells[0].height
+    var smallArea = cells[1].width * cells[1].height
+    verify(bigArea > smallArea * 1.5,
+      "the large window must get the large share of the view, got "
+      + bigArea + " vs " + smallArea)
+  }
+
+  function test_expoLayout_keepsInputOrderAndIsDeterministic() {
+    var sizes = [
+      { width: 1600, height: 900 }, { width: 800, height: 1200 },
+      { width: 900, height: 900 }, { width: 400, height: 300 }
+    ]
+    var first = WindowGeometry.expoLayout(sizes, 0, 0, 1600, 900, 12)
+    var second = WindowGeometry.expoLayout(sizes, 0, 0, 1600, 900, 12)
+    compare(first.length, sizes.length)
+    for (var i = 0; i < first.length; i++) {
+      fuzzyCompare(second[i].x, first[i].x)
+      fuzzyCompare(second[i].y, first[i].y)
+      fuzzyCompare(second[i].width, first[i].width)
+      fuzzyCompare(second[i].height, first[i].height)
     }
 
-    // Perfect full grids extend all the way to the right edge with the last real
-    // cell (every row is full).
-    var fullGrids = [2, 4, 6, 9, 12]
-    for (var g = 0; g < fullGrids.length; g++) {
-      var gridCount = fullGrids[g]
-      var last = WindowGeometry.tiledPreviewGeometry(gridCount - 1, gridCount, areaW, areaH, 16)
-      fuzzyCompare(last.x + last.width, areaW, "last cell of a full grid must reach the right edge")
-      fuzzyCompare(last.y + last.height, areaH, "last cell of a full grid must reach the bottom edge")
+    // Cells follow the list, never the size: previews must not swap identities
+    // when a bigger window joins the workspace.
+    var smallFirst = WindowGeometry.expoLayout(
+      [{ width: 400, height: 300 }, { width: 1600, height: 900 }], 0, 0, 1600, 900, 12)
+    var bigFirst = WindowGeometry.expoLayout(
+      [{ width: 1600, height: 900 }, { width: 400, height: 300 }], 0, 0, 1600, 900, 12)
+    verify(smallFirst[0].width < bigFirst[0].width,
+      "cell 0 must belong to the first entry of the list, not to the largest window")
+  }
+
+  function test_expoLayout_keepsUnusableWindowsVisible() {
+    var sizes = [
+      { width: 1600, height: 900 },
+      { width: 0, height: 0 },
+      { width: NaN, height: NaN },
+      null
+    ]
+    var cells = WindowGeometry.expoLayout(sizes, 0, 0, 1600, 900, 12)
+    compare(cells.length, 4)
+    for (var a = 0; a < cells.length; a++) {
+      verify(cells[a].width > 0 && cells[a].height > 0,
+        "cell " + a + " must stay visible even with unusable geometry")
+      verify(cells[a].x >= -0.001 && cells[a].y >= -0.001
+        && cells[a].x + cells[a].width <= 1600.001
+        && cells[a].y + cells[a].height <= 900.001,
+        "cell " + a + " must stay inside the area")
+      for (var b = a + 1; b < cells.length; b++) {
+        var overlapX = Math.min(cells[a].x + cells[a].width, cells[b].x + cells[b].width)
+          - Math.max(cells[a].x, cells[b].x)
+        var overlapY = Math.min(cells[a].y + cells[a].height, cells[b].y + cells[b].height)
+          - Math.max(cells[a].y, cells[b].y)
+        verify(!(overlapX > 0.001 && overlapY > 0.001),
+          "cells " + a + " and " + b + " must never overlap")
+      }
     }
   }
 
-  function test_tiledPreview_orderedLeftToRightTopToBottom() {
-    var cells = []
-    for (var i = 0; i < 6; i++) cells.push(WindowGeometry.tiledPreviewGeometry(i, 6, 900, 600, 20))
-    // Row 0 fills left-to-right, row 1 starts under row 0 at the left edge.
-    fuzzyCompare(cells[1].x - (cells[0].x + cells[0].width), 20)
-    compare(cells[0].y, cells[1].y)
-    compare(cells[0].y, cells[2].y)
-    fuzzyCompare(cells[3].y - (cells[0].y + cells[0].height), 20)
-    compare(cells[3].x, cells[0].x)
-    compare(cells[3].y, cells[4].y)
-    compare(cells[3].y, cells[5].y)
-  }
-
-  function test_tiledPreview_invalidInputsStayFinite() {
-    var none = WindowGeometry.tiledPreviewGeometry(0, 0, 100, 100, 4)
-    compare(none.width, 0)
-    compare(none.height, 0)
-
-    var clamped = WindowGeometry.tiledPreviewGeometry(99, 3, 300, 200, 10)
-    verify(isFinite(clamped.x))
-    verify(isFinite(clamped.y))
-    verify(clamped.width > 0)
-    verify(clamped.height > 0)
-    verify(clamped.x >= 0 && clamped.x + clamped.width <= 300.001)
-    verify(clamped.y >= 0 && clamped.y + clamped.height <= 200.001)
-
-    var bad = WindowGeometry.tiledPreviewGeometry(NaN, -2, NaN, -5, -1)
-    verify(isFinite(bad.x) && isFinite(bad.y))
-    verify(isFinite(bad.width) && isFinite(bad.height))
+  function test_tiledPreviewGeometryIsGone() {
+    // The current-workspace viewer no longer packs windows into a grid; the
+    // tiling solver was removed together with the parent workspace card.
+    verify(WindowGeometry.tiledPreviewGeometry === undefined,
+      "tiledPreviewGeometry must no longer be exported")
   }
 
   function test_previewCanvasUsesNearlyEntireCard() {

@@ -1400,9 +1400,8 @@ Item {
 
   // Switch an already-open overview into another presentation without tearing
   // down the open pipeline (closing frames, releasing captures, re-mapping the
-  // panel). Used by the bottom-right corner trigger to promote the Mirage
-  // viewer from mode "1" (single current workspace) to mode "2" (full
-  // multi-workspace overview).
+  // panel). Used to move between the current-workspace window viewer and the
+  // full multi-workspace overview without a visible rebuild.
   function setPresentation(presentation) {
     if (!root.opened) return
     if (presentation !== "single" && presentation !== "full") return
@@ -1419,8 +1418,8 @@ Item {
     keyCatcher.forceActiveFocus()
   }
 
-  // ── Single-workspace view (Mirage mode "1") helpers ──────────────────────
-  // The single view always follows the compositor's focused workspace so live
+  // ── Current-workspace view helpers ─────────────────────────────────────────
+  // The viewer always follows the compositor's focused workspace so live
   // focus changes keep the preview truthful even before dismissal.
   function singleWorkspaceId() {
     var focused = Hyprland.focusedWorkspace
@@ -1970,37 +1969,26 @@ Item {
           }
         }
 
-        // ── Single-Workspace Tiled View (Mirage mode "1") ──────────────────────
-        // Shows only the focused workspace, with its windows projected into a
-        // tiling-style edge-to-edge layout so every window is fully visible with
-        // no overlap. The compositor layout is never touched: this is a pure
-        // visual arrangement. Clicking a window activates + raises it and closes
-        // the overview, restoring the original desktop layout untouched.
-        Item {
+        // ── Current-Workspace Window Viewer (bottom-right corner action) ───────
+        // Shows only the windows of the workspace that is currently focused. No
+        // parent workspace card, no workspace-number badge, no grid: the window
+        // previews float freely at their real on-screen positions and the app-icon
+        // placeholder is disabled, so the viewer is previews only. The compositor
+        // layout is never touched: this is a pure visual arrangement. Clicking a
+        // window activates + raises it and closes the viewer, restoring the
+        // original desktop layout untouched.
+        CurrentWorkspaceWindows {
           id: singleWorkspaceView
           anchors.fill: parent
           visible: root.activePresentation === "single"
 
-          WorkspaceCard {
-            id: singleWorkspaceCard
-            anchors.fill: parent
-            overview: root
-            workspaceId: root.singleWorkspaceId()
-            workspace: root.singleWorkspaceObject()
-            isSpecial: false
-            keyboardSelected: true
-            focused: Hyprland.focusedWorkspace !== null
-            tileWindows: true
-            livePreviews: root.opened && root.livePreviewsReady && panel.visible && root.activePresentation === "single"
-            onWorkspaceActivated: function(occupied) {
-              // In the tiled view the windows are the only interactive targets;
-              // empty-space clicks are inert so the arrangement is never left.
-            }
-            onWindowActivated: function(toplevel) { root.activateWindow(toplevel) }
-            onWindowDragStarted: function(toplevel) { root.beginWindowDrag(toplevel) }
-            onWindowDragFinished: function(toplevel) { root.endWindowDrag(toplevel) }
-            onWindowDropped: function(toplevel) { root.moveWindowToWorkspace(toplevel, root.singleWorkspaceId()) }
-          }
+          overview: root
+          workspaceId: root.singleWorkspaceId()
+          workspace: root.singleWorkspaceObject()
+          // No livePreviewsReady gate here: this presentation never shows icon
+          // placeholders, so the screencopy streams start on the first frame.
+          livePreviews: root.opened && root.activePresentation === "single"
+          onWindowActivated: function(toplevel) { root.activateWindow(toplevel) }
         }
       }
 

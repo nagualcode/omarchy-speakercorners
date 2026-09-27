@@ -612,37 +612,6 @@ function previewGeometry(ipcObject, monitor, screen, areaWidth, areaHeight,
   }
 }
 
-// Tiling-style edge-to-edge layout for the single-workspace overview (Mirage
-// mode "1"). Windows are arranged in a balanced grid with uniform cells and a
-// small gap, so every window is fully visible with no overlap — a static visual
-// projection of what a tiling WM would produce. The compositor layout is never
-// touched; this only drives preview rendering.
-function tiledPreviewGeometry(index, count, areaWidth, areaHeight, spacing) {
-  var safeCount = Math.max(0, Math.floor(finiteNumber(count) || 0))
-  if (safeCount === 0) return { x: 0, y: 0, width: 0, height: 0 }
-
-  var safeWidth = Math.max(1, finiteNumber(areaWidth) || 1)
-  var safeHeight = Math.max(1, finiteNumber(areaHeight) || 1)
-  var gap = Math.max(0, finiteNumber(spacing) || 0)
-  var safeIndex = Math.max(0, Math.min(safeCount - 1, Math.floor(finiteNumber(index) || 0)))
-
-  var columns = Math.max(1, Math.ceil(Math.sqrt(safeCount)))
-  var rows = Math.max(1, Math.ceil(safeCount / columns))
-
-  var cellWidth = Math.max(1, (safeWidth - gap * (columns - 1)) / columns)
-  var cellHeight = Math.max(1, (safeHeight - gap * (rows - 1)) / rows)
-
-  var col = safeIndex % columns
-  var row = Math.floor(safeIndex / columns)
-
-  return {
-    x: Math.min(safeWidth - cellWidth, Math.max(0, col * (cellWidth + gap))),
-    y: Math.min(safeHeight - cellHeight, Math.max(0, row * (cellHeight + gap))),
-    width: cellWidth,
-    height: cellHeight
-  }
-}
-
 // Malformed/unavailable IPC geometry must not make a window disappear. Keep
 // such clients in a compact bottom-right grid without affecting valid clients.
 function fallbackGeometry(index, count, areaWidth, areaHeight, spacing) {
@@ -663,6 +632,159 @@ function fallbackGeometry(index, count, areaWidth, areaHeight, spacing) {
     y: Math.max(0, finiteNumber(areaHeight) - regionHeight) + row * (height + gap),
     width: width,
     height: height
+  }
+}
+
+// ── Exposé arrangement ──────────────────────────────────────────────────────
+// Fit one window's real aspect ratio inside a region and center it there. The
+// window keeps its proportions and never leaves the region, which is what makes
+// an Exposé cell readable instead of a stretched thumbnail.
+function aspectFitRect(itemWidth, itemHeight, region) {
+  var regionWidth = Math.max(1, finiteNumber(region && region.width) || 1)
+  var regionHeight = Math.max(1, finiteNumber(region && region.height) || 1)
+  var regionX = finiteNumber(region && region.x) || 0
+  var regionY = finiteNumber(region && region.y) || 0
+  var naturalWidth = Math.max(1, finiteNumber(itemWidth) || 1)
+  var naturalHeight = Math.max(1, finiteNumber(itemHeight) || 1)
+
+  var scale = Math.min(regionWidth / naturalWidth, regionHeight / naturalHeight)
+  if (!isFinite(scale) || scale <= 0) scale = 1
+
+  var width = Math.max(1, Math.min(regionWidth, naturalWidth * scale))
+  var height = Math.max(1, Math.min(regionHeight, naturalHeight * scale))
+
+  return {
+    x: regionX + (regionWidth - width) / 2,
+    y: regionY + (regionHeight - height) / 2,
+    width: width,
+    height: height
+  }
+}
+
+// Arrange every window of a workspace so all of them are visible at once, the
+// way macOS Exposé does: no two previews overlap, each one keeps its real aspect
+// ratio, and nothing is drawn inside a uniform grid of cards.
+//
+// The solver is a recursive area-balanced binary partition ("slice and dice"):
+// a region holding more than one window is cut in two along the axis that group
+// fits best, at the fraction that best balances the real window area of both
+// halves, and both halves are solved recursively. A region that ends up with a
+// single window aspect-fits and centers it, so the result reads as Exposé rather
+// than as a grid of identical slots.
+//
+// Input order is the caller's order and is never re-sorted: previews keep their
+// index (and therefore their cell) while windows are opened, moved or closed.
+function expoLayout(sizes, areaX, areaY, areaWidth, areaHeight, spacing) {
+  var originX = finiteNumber(areaX) || 0
+  var originY = finiteNumber(areaY) || 0
+  var usableWidth = Math.max(1, finiteNumber(areaWidth) || 1)
+  var usableHeight = Math.max(1, finiteNumber(areaHeight) || 1)
+  var gap = Math.max(0, Math.min(finiteNumber(spacing) || 0,
+    Math.min(usableWidth, usableHeight) / 4))
+
+  var items = []
+  var count = (sizes && typeof sizes.length === "number") ? sizes.length : 0
+  for (var i = 0; i < count; i++) {
+    var size = sizes[i] || {}
+    var itemWidth = Math.max(1, finiteNumber(size.width) || 1)
+    var itemHeight = Math.max(1, finiteNumber(size.height) || 1)
+    items.push({
+      index: i,
+      width: itemWidth,
+      height: itemHeight,
+      area: itemWidth * itemHeight
+    })
+  }
+  if (items.length === 0) return []
+
+  var rects = new Array(items.length)
+  solve(0, items.length, {
+    x: originX, y: originY, width: usableWidth, height: usableHeight
+  })
+
+  // Safety net: a region only a few pixels wide can push a nested cell past its
+  // parent. Clamping keeps every preview reachable and clickable.
+  for (var k = 0; k < rects.length; k++) {
+    var rect = rects[k]
+    if (!rect) continue
+    rect.width = Math.max(1, Math.min(usableWidth, rect.width))
+    rect.height = Math.max(1, Math.min(usableHeight, rect.height))
+    rect.x = clamp(rect.x, originX, originX + usableWidth - rect.width)
+    rect.y = clamp(rect.y, originY, originY + usableHeight - rect.height)
+  }
+
+  return rects
+
+  function solve(start, end, region) {
+    var total = end - start
+    if (total <= 0) return
+    if (total === 1) {
+      rects[start] = aspectFitRect(items[start].width, items[start].height, region)
+      return
+    }
+
+    var sumWidth = 0
+    var sumHeight = 0
+    var totalArea = 0
+    for (var i = start; i < end; i++) {
+      sumWidth += items[i].width
+      sumHeight += items[i].height
+      totalArea += items[i].area
+    }
+
+    // A region wider than the group's single-row aspect is cut into columns; a
+    // taller one is cut into rows.
+    var regionAspect = region.width / Math.max(1, region.height)
+    var groupAspect = sumWidth / Math.max(1, sumHeight)
+    var cutVertically = regionAspect >= groupAspect
+
+    // Best contiguous cut: the one that balances the real area of both halves.
+    var running = 0
+    var splitAt = start + 1
+    var bestImbalance = Infinity
+    for (var k = start; k < end - 1; k++) {
+      running += items[k].area
+      var imbalance = Math.abs(running - (totalArea - running))
+      if (imbalance < bestImbalance - 1e-9) {
+        bestImbalance = imbalance
+        splitAt = k + 1
+      }
+    }
+
+    var firstArea = 0
+    for (var m = start; m < splitAt; m++) firstArea += items[m].area
+    var fraction = totalArea > 0 ? firstArea / totalArea : 0.5
+    // Never hand a group a sliver of the region, whatever the areas say.
+    fraction = clamp(fraction, 1 / (total + 1), total / (total + 1))
+
+    var cut = Math.min(gap,
+      Math.max(0, Math.min(region.width, region.height) / 3))
+
+    if (cutVertically) {
+      var splitWidth = Math.max(1, region.width - cut)
+      var firstWidth = Math.max(1, splitWidth * fraction)
+      solve(start, splitAt, {
+        x: region.x, y: region.y, width: firstWidth, height: region.height
+      })
+      solve(splitAt, end, {
+        x: region.x + firstWidth + cut,
+        y: region.y,
+        width: Math.max(1, splitWidth - firstWidth),
+        height: region.height
+      })
+    } else {
+      var splitHeight = Math.max(1, region.height - cut)
+      var firstHeight = Math.max(1, splitHeight * fraction)
+      solve(start, splitAt, {
+        x: region.x, y: region.y, width: region.width, height: firstHeight
+      })
+      solve(splitAt, end, {
+        x: region.x,
+        y: region.y + firstHeight + cut,
+        width: region.width,
+        height: Math.max(1, splitHeight - firstHeight)
+      })
+    }
   }
 }
 

@@ -125,16 +125,33 @@ hyprctl configerrors
 ## What's new
 
 <details>
+<summary><b>Version 2.5.0 — click to reveal all changes</b></summary>
+
+### Current-Workspace Window Viewer (bottom-right corner)
+* **One workspace only**: The bottom-right screen corner (see `Speakercorners.qml`, action `"mirador"`) opens a viewer for the windows of the focused workspace — no multi-workspace grid.
+* **No parent workspace card**: The old "grid mãe" is gone. There is no card surface, no outer border, no header and no workspace-number badge; only the window previews are drawn.
+* **Exposé arrangement**: The workspace windows are packed by `WindowGeometry.expoLayout`, a recursive area-balanced binary partition ("slice and dice"). Every window is fully visible at once, **no two previews overlap**, and each one keeps its real aspect ratio — a macOS Exposé composition, not a grid of identical slots and not a picture of the desktop with its floating windows piled on top of each other. A large window gets the large share of the view.
+* **One solve for the whole workspace**: The composition is solved once and each preview takes the cell that belongs to its own index, in the model's order, so opening or closing a window re-solves the layout without ever reordering (or re-identifying) the survivors. A client whose IPC geometry is unusable is given a default 16:10 cell so it can never vanish.
+* **Previews only**: The app-icon placeholder is disabled (`WindowPreview.showIconFallback: false`) and the screencopy streams start on the first frame instead of waiting behind the deferred `livePreviewsReady` timer, so the viewer never flashes icons before swapping them for real frames.
+* **Live focused-workspace tracking**: The view follows the compositor's focused workspace (`singleWorkspaceId`/`singleWorkspaceObject`).
+* **Click to activate & raise**: Clicking a window focuses it by address, raises it to top, and dismisses the overlay with the desktop layout untouched. Window drag is disabled (there is no drop target in this view).
+* **Inert navigation**: Workspace/wheel/Tab/arrow/keys navigation is disabled — windows are the only interactive targets.
+* **Corner trigger**: The bottom-right corner is a plain toggle (open ↔ close). If another presentation is already open, it switches in place. The full multi-workspace overview remains available via `Super`, a 3-finger swipe up, or `omarchy-shell mirador toggle`.
+* **Unchanged elsewhere**: The full overview keeps the faithful projection (`WindowGeometry.previewGeometry`, uniform scale, real relative positions, overlaps included) inside its workspace cards, and so do the compact and carousel cycle views. The old uniform tiling solver (`WindowGeometry.tiledPreviewGeometry` / `WorkspaceCard.tileWindows`) remains removed.
+
+</details>
+
+<details>
 <summary><b>Version 2.4.0 — click to reveal all changes</b></summary>
 
 ### Single-Workspace Tiled View (Mirage mode "1")
 * **Current-workspace-only summary**: The bottom-right screen corner (see `Speakercorners.qml`, action `"mirador"`) now opens the overview in a new mode "1" that shows just the focused workspace.
-* **Tiling-style no-overlap grid**: Windows are projected into a uniform edge-to-edge grid (`tileWindows`), so every window is fully visible with no overlap (`WindowGeometry.tiledPreviewGeometry`).
+* **Tiling-style no-overlap grid**: Windows are projected into a uniform edge-to-edge grid (`tileWindows`), so every window is fully visible with no overlap (`WindowGeometry.tiledPreviewGeometry`). *Superseded by 2.5.0: the corner now shows a chrome-free Exposé viewer — no overlap, but no grid either.*
 * **Non-destructive by design**: Only the preview projection is tiled — the real Hyprland layout is never altered.
 * **Live focused-workspace tracking**: The view follows the compositor's focused workspace (`singleWorkspaceId`/`singleWorkspaceObject`) so the summary stays truthful under focus changes.
 * **Click to activate & raise**: Clicking a window focuses it by address, raises it to top, and dismisses the overview with the desktop layout untouched.
 * **Inert navigation**: Workspace/wheel/Tab/arrow/keys navigation is disabled — windows are the only interactive targets.
-* **Corner trigger chain**: Bottom-right corner presses cycle closed → mode "1" → mode "2" (full overview) → close. Non-corner entry points (`mirador`, `Shift+Tab`, gestures, other corners) keep the plain toggle.
+* **Corner trigger chain**: Bottom-right corner presses cycle closed → mode "1" → mode "2" (full overview) → close. Non-corner entry points (`mirador`, `Shift+Tab`, gestures, other corners) keep the plain toggle. *Superseded by 2.5.0: the corner is now a plain toggle.*
 
 </details>
 

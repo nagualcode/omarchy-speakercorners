@@ -367,20 +367,18 @@ Item {
     if (miradorLoader.item) miradorLoader.item.dismiss()
   }
 
-  // ── Bottom-right corner Mirage trigger state machine ─────────────────────
-  // The corner summarises the embedded workspace overview in three states:
-  //   trigger #1 (overview closed)  → mode "1": current workspace only, windows
-  //                                   arranged in a tiling-style no-overlap grid
-  //   trigger #2 (mode "1" active)  → mode "2": the full multi-workspace overview
-  //   trigger #3 (mode "2" active)  → close the overview
-  // Any other dismissal path (clicking a window, Esc, background click) resets
-  // the chain so the next corner trigger starts fresh at mode "1".
+  // ── Bottom-right corner trigger ───────────────────────────────────────────
+  // The corner is a plain toggle over the current-workspace window viewer: the
+  // windows of the focused workspace only, no workspace cards, no number badge.
+  // Pressing it while a different presentation (the full multi-workspace
+  // overview) is open switches that presentation in place instead of stacking a
+  // second overlay, and pressing it again closes the viewer.
   function triggerMirador(edge) {
-    if (edge === "bottom-right") root.cycleMirador()
+    if (edge === "bottom-right") root.toggleMiradorWindows()
     else root.toggleMirador()
   }
 
-  function cycleMirador() {
+  function toggleMiradorWindows() {
     var mirador = miradorLoader.item
     if (!mirador) return
     if (!mirador.opened) {
@@ -388,10 +386,10 @@ Item {
       return
     }
     if (mirador.activePresentation === "single") {
-      mirador.setPresentation("full")
+      mirador.dismiss()
       return
     }
-    mirador.dismiss()
+    mirador.setPresentation("single")
   }
 
   function openMiradorSingle() {
@@ -1905,7 +1903,7 @@ Item {
     function open(payload: string): string { root.openMirador(); return "ok" }
     function close(): string { root.closeMirador(); return "ok" }
     function toggle(): string { root.toggleMirador(); return "ok" }
-    function cycle(): string { root.cycleMirador(); return "ok" }
+    function cycle(): string { root.toggleMiradorWindows(); return "ok" }
     function summon(payload: string): string { root.openMirador(); return "ok" }
     function dismiss(): string { root.closeMirador(); return "ok" }
     function state(): string {

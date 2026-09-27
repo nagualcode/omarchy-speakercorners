@@ -14,7 +14,7 @@ Rectangle {
 
   readonly property var waylandToplevel: toplevel ? toplevel.wayland : null
   readonly property bool activatable: waylandToplevel !== null || (toplevel && String(toplevel.address || "") !== "")
-  readonly property bool movable: toplevel !== null && String(toplevel.address || "") !== ""
+  readonly property bool movable: root.allowDrag && toplevel !== null && String(toplevel.address || "") !== ""
   readonly property bool dragging: dragProxy.dragSessionActive
   readonly property string appId: root.appIdFor(toplevel)
   readonly property string title: root.titleFor(toplevel)
@@ -45,6 +45,13 @@ Rectangle {
   property bool liveCaptureEnabled: false
   property bool showLabel: true      // set false in carousel to suppress title pill
   property bool keyboardSelected: false
+  // When false, the app-icon placeholder is never drawn: the preview surface
+  // simply waits for its first real screencopy frame instead of flashing an
+  // icon and then swapping it out. Used by the current-workspace viewer.
+  property bool showIconFallback: true
+  // When false, the DragHandler is disabled (no drag cursor, no drag state).
+  // Used by presentations without workspace drop targets.
+  property bool allowDrag: true
 
   signal activated()
   signal tabActivated(var targetToplevel)
@@ -135,7 +142,10 @@ Rectangle {
     }
 
     Image {
-      visible: !root.hasReceivedFrame && !preview.hasContent && source !== ""
+      visible: root.showIconFallback
+        && !root.hasReceivedFrame
+        && !preview.hasContent
+        && source !== ""
       anchors.centerIn: parent
       width: Math.min(parent.width, parent.height) * 0.34
       height: width

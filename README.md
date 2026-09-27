@@ -21,17 +21,20 @@ single masked, click-through overlay. No window stack, no bloat — one surface,
   workspace floating strip, or run your own command. Everything else stays
   fully click-through.
 - **🗺️ Workspace overview (bottom-right)** — a port of the Mirador workspace
-  overview (`mirador/`), summoned straight from a hot corner. It lifts every
-  workspace onto the screen for visual navigation and window launching, keeps
-  its own full-screen overlay surface (exclusive keyboard focus while open) and
-  dims the desktop behind it with the same scrim the Omarchy menu uses.
+  overview (`mirador/`), summoned straight from a hot corner. It keeps its own
+  full-screen overlay surface (exclusive keyboard focus while open) and dims the
+  desktop behind it with the same scrim the Omarchy menu uses.
+  The bottom-right corner opens a **current-workspace window viewer**: only the
+  windows of the workspace you are on, no workspace cards, no workspace-number
+  badge and no grid — the windows are packed like macOS **Exposé**, so all of them
+  are visible at once, none overlaps another, and each keeps its real aspect
+  ratio (floating windows that cover each other on the desktop are pulled apart
+  here so you can always click the one you want). It is previews only (there is
+  no "app icons first, then previews" flash), and clicking a window brings it to
+  the top of the stack. The corner is a plain toggle: press it again to close.
+  The full multi-workspace overview is still one `Super` press (or a 3-finger
+  swipe up) away, and `omarchy-shell mirador toggle` opens it directly.
   It is addressed by the `mirador` corner action or `omarchy-shell mirador toggle`.
-  Picking a floating window on it brings that window to the top of the stack.
-  Repeated bottom-right corner presses cycle the **Mirage** trigger: first it
-  opens mode "1" (the current workspace only, windows projected into a tiling
-  style no-overlap grid), then mode "2" (the full multi-workspace overview),
-  then closes. Every dismissal path (window click, `Esc`, background click)
-  resets the chain, so the next trigger starts at mode "1" again.
 - **🌆 Floating workspace strip (bottom-center)** — one quarter of the bottom
   edge's width, centered; hover and wander between workspaces. Each card is a
   live preview whose app icons fill the cell (a single app gets the whole tile,

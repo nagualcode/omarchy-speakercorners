@@ -55,6 +55,10 @@ TestCase {
     return readSource("../CompactCycleView.qml")
   }
 
+  function currentWorkspaceWindowsSource() {
+    return readSource("../CurrentWorkspaceWindows.qml")
+  }
+
   // ── WindowModel.syncPreviewDelegates: existence and signature ────────────────
 
   function test_syncPreviewDelegatesExistsInWindowModel() {
@@ -191,6 +195,31 @@ TestCase {
     // so the new window goes through the icon→frame transition correctly
     verify(/onToplevelChanged[\s\S]*?hasReceivedFrame\s*=\s*false|hasReceivedFrame\s*=\s*false[\s\S]*?onToplevelChanged/.test(src),
       "WindowPreview must reset hasReceivedFrame when toplevel changes")
+  }
+
+  // ── CurrentWorkspaceWindows: same pooling discipline, no icon phase ──────────
+
+  function test_currentWorkspaceWindowsDoesNotUseRepeaterOnEffectiveToplevels() {
+    var src = currentWorkspaceWindowsSource()
+    verify(!/Repeater\s*\{[^}]*model\s*:\s*[^}]*effectiveToplevels/.test(src),
+      "CurrentWorkspaceWindows must not bind Repeater.model directly to effectiveToplevels")
+  }
+
+  function test_currentWorkspaceWindowsUsesSyncPreviewDelegatesForIncremental() {
+    var src = currentWorkspaceWindowsSource()
+    verify(/syncPreviewDelegates|syncPreviews/.test(src),
+      "CurrentWorkspaceWindows must use syncPreviews/syncPreviewDelegates for incremental updates")
+    verify(/previewMap/.test(src),
+      "CurrentWorkspaceWindows must maintain a previewMap for delegate identity tracking")
+  }
+
+  function test_currentWorkspaceWindowsNeverShowsTheIconPlaceholder() {
+    var src = currentWorkspaceWindowsSource()
+    // The whole point of this view: previews only, never "icons then previews".
+    verify(/showIconFallback:\s*false/.test(src),
+      "CurrentWorkspaceWindows must set showIconFallback: false on its previews")
+    verify(/liveCaptureEnabled:\s*root\.livePreviews\s*&&\s*root\.visible/.test(src),
+      "CurrentWorkspaceWindows previews must not wait behind a deferred start flag")
   }
 
   // ── WorkspaceOverview: screencast events are filtered ───────────────────────

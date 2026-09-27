@@ -34,9 +34,10 @@ mirador/
 ├── manifest.json              # Omarchy plugin manifest (schemaVersion: 1)
 ├── WorkspaceOverview.qml      # Main overlay entry point, grid layout & keyboard catcher
 ├── WorkspaceCard.qml          # Per-workspace card surface, badge, dimming & preview host
+├── CurrentWorkspaceWindows.qml# Chrome-free Exposé viewer for the current workspace only
 ├── WindowPreview.qml          # Window screencopy view, group tab bar & title pill
 ├── InsertionWorkspaceCard.qml # Drag-and-drop workspace insertion placeholder
-├── WindowGeometry.js          # Pure JS: multi-monitor scaling, 2D cyclic move, pixel snapping
+├── WindowGeometry.js          # Pure JS: multi-monitor scaling, Exposé packing, 2D cyclic move, pixel snapping
 ├── WindowModel.js             # Pure JS: Hyprland group resolution, address normalization
 ├── GestureHelper.js           # Pure JS: pinch gesture threshold and one-shot debounce logic
 ├── mirador.gestures.lua       # Hyprland 3-finger swipe gesture configuration snippet
@@ -52,7 +53,7 @@ mirador/
     ├── tst_gesturehelper.qml  # Pinch gesture threshold & debounce unit tests
     ├── tst_windowpreview_security.qml # Security & capture release tests
     ├── tst_workspaceoverview_integration.qml # Integration & UI tests
-    ├── tst_corner_mirador_modes.qml # Bottom-right corner Mirage trigger state machine
+    ├── tst_corner_mirador_modes.qml # Bottom-right corner current-workspace viewer trigger
     └── tst_demo_overlay.qml   # Demo overlay unit tests
 ```
 
@@ -128,6 +129,6 @@ omarchy restart shell
 ```
 
 Then confirm with: `omarchy-shell mirador diagnose` (expect `closed presentation=full ...`).
-The plugin root exposes `cycle()` (drives the same single→full→close state machine the
-bottom-right corner uses) and `diagnose()` (`opened`, `presentation`, `overviewMode`,
+The plugin root exposes `cycle()` (the same open ↔ close toggle the bottom-right corner
+uses) and `diagnose()` (`opened`, `presentation`, `overviewMode`,
 `selectedCard`) over IPC for live verification.

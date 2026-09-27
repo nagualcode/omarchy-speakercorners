@@ -76,6 +76,7 @@ This document details the architectural layout, Wayland protocol interactions, Q
   * **Critical Lifecycle Invariant**: When Mirador is dismissed or hidden, `liveCaptureEnabled` becomes `false`, immediately releasing `captureSource` to `null`. This prevents dangling DMA-BUF handles from crashing Hyprland during DPMS sleep or monitor hotplug events.
 * Handles Hyprland window groups (tabbed windows) by rendering an interactive group tab bar.
 * Renders window title pills with `Text.PlainText` to neutralize any formatting or injection issues.
+* Two opt-outs used by the current-workspace viewer: `showIconFallback: false` (never draw the app-icon placeholder, so previews do not flash icons first) and `allowDrag: false` (disable the `DragHandler` where there are no drop targets).
 
 ### 4. `InsertionWorkspaceCard.qml`
 * Transient drop zone card created only during window drag operations.
@@ -87,15 +88,18 @@ This document details the architectural layout, Wayland protocol interactions, Q
   * `logicalMonitorGeometry`: Computes compositor-space coordinates.
   * `usableMonitorGeometry`: Accounts for top/bottom status bar reservations (e.g. Omarchy peekbar).
   * `workspaceTransform`: Computes uniform scale factor and centering offsets.
-  * `previewGeometry`: Projects Hyprland client rectangles into the card preview canvas.
+  * `previewGeometry`: Projects Hyprland client rectangles into the card preview canvas (faithful mirror: one uniform scale, real relative positions, overlaps preserved).
+  * `expoLayout` / `aspectFitRect`: Exposé arrangement — packs a set of window sizes into non-overlapping cells that each keep their real aspect ratio.
   * `snapToDevicePixels`: Quantizes logical values to physical device pixel boundaries.
   * `overviewGridGeometry`: Calculates optimal column/row matrix to maximize card size.
-  * `tiledPreviewGeometry`: Projects windows into a uniform edge-to-edge tiling grid (balanced columns via `ceil(sqrt(n))`) used by the single-workspace presentation, so every window is fully visible with no overlap.
   * `cyclicCardMove`: Implements 2D cyclic keyboard navigation (global continuous horizontal cycle, spatial nearest-center vertical row movement with top/bottom wrap-around).
 
-### 7. Single-Workspace Tiled Presentation (Mirage mode "1")
-* A dedicated `WorkspaceOverview` presentation (`activePresentation === "single"`) that summarises exactly the *current* workspace, reached via a `payload.presentation === "single"` opening (bottom-right corner first trigger).
-* Renders one `WorkspaceCard` (`singleWorkspaceView`) spanning the full usable area with `tileWindows: true`, driving child previews through `WindowGeometry.tiledPreviewGeometry` — a tiling-style grid with no overlap. The real Hyprland layout is never touched; the arrangement is a pure preview projection (non-destructive invariant).
+### 7. Current-Workspace Window Viewer (`activePresentation === "single"`)
+* `CurrentWorkspaceWindows.qml` — the bottom-right corner action. It shows the windows of the focused workspace only and is deliberately **not** a `WorkspaceCard`: no card surface, no border, no header, no workspace-number badge, and no grid.
+* Windows are packed by `expoLayout` instead of being projected. The faithful projection (`previewGeometry`) is wrong for this view: floating windows overlap on the desktop, so a mirror would bury the window underneath and the user could not click it. `expoLayout` is a recursive area-balanced binary partition ("slice and dice") — a region with more than one window is cut in two along the axis the group fits best, at the fraction that best balances the real window area of both halves; a region with a single window aspect-fits and centers it. Result: every window fully visible, no two previews overlapping, every aspect ratio preserved, and a large window getting the large share of the view. Neither a grid nor a desktop mirror.
+* The composition is solved once per workspace (`spatialPreview.layout`) and every preview takes the cell of its own index (`rectFor(itemIndex)`). Input order is the model's order and is never re-sorted, so re-solving the layout never reorders or re-identifies the surviving previews. A client whose IPC geometry is unusable gets a default 16:10 cell (`naturalSizeOf`) so it can never disappear, which is why this view needs no `fallbackGeometry` corner grid. `fallbackGeometry` and `previewGeometry` are still what the workspace cards and the compact/carousel cycle views use.
+* `showIconFallback: false` plus an immediate `livePreviews` binding (no `livePreviewsReady` deferral) means the viewer shows previews only — it never renders app icons and then swaps them for frames.
+* `allowDrag: false` disables the `DragHandler`: this presentation has no workspace drop targets, so a drag would have nowhere to land.
 * Tracks the compositor's focused workspace via `singleWorkspaceId()`/`singleWorkspaceObject()` so the preview stays truthful under live focus changes.
 * Clicking a window calls the regular `activateWindow()` path (focus by address + `raiseToTop` + dismiss), restoring the original desktop layout untouched.
 * Hides the multi-workspace cards and drag insertion targets, and makes wheel/Tab/arrow/keys navigation inert — windows are the only interactive targets. `setPresentation("single" || "full")` performs tear-free in-place presentation switches.
