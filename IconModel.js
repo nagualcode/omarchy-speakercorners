@@ -7,6 +7,31 @@
 // nf-md-application: used only after both mapped glyph and image lookup fail.
 var GENERIC_APP_GLYPH = "\udb82\udcc6"
 
+// Window classes that belong to the shell runtime rather than to an app. Every
+// Omarchy shell plugin (OmaWhatsApp, Olook, the Spotify panel, omafile, the dev
+// gallery, ...) is a window inside one Quickshell process, so the compositor
+// reports this single class for all of them — and /usr/share/applications ships
+// a matching org.quickshell.desktop whose icon is the Quickshell logo. Matching
+// a class like this against a desktop entry always succeeds against the wrong
+// entry, so these windows are resolved by their window title instead.
+var RUNTIME_APP_CLASSES = {
+  "org.quickshell": true,
+  "quickshell": true
+}
+
+function isRuntimeClass(value) {
+  return RUNTIME_APP_CLASSES[compactIdentity(value)] === true
+}
+
+// Normalize the table itself so a stray separator or case in a key cannot
+// silently make a runtime class look like an ordinary app class.
+;(function () {
+  var normalized = {}
+  for (var key in RUNTIME_APP_CLASSES) normalized[compactIdentity(key)] = true
+  RUNTIME_APP_CLASSES = normalized
+})()
+
+
 // App glyphs already assigned by Omarchy's default menu and provided by its
 // default JetBrainsMono Nerd Font package. Keep matching exact so a web app
 // class such as "chrome-chatgpt.com__-Default" does not become Chrome.
@@ -133,6 +158,41 @@ function memberIdentityCandidates(member) {
     if (candidate.length > 0 && output.indexOf(candidate) === -1) output.push(candidate)
   }
   return output
+}
+
+// Window titles, in the order they should be trusted. A shell plugin window
+// keeps a stable title ("OmaWhatsApp", "Olook", "Omarchy Spotify"), which is
+// the only thing that tells those windows apart from one another.
+function memberTitleCandidates(member) {
+  member = member && typeof member === "object" ? member : {}
+
+  var input = [member.initialTitle, member.title]
+  var output = []
+  for (var i = 0; i < input.length; i++) {
+    var candidate = nonEmptyString(input[i])
+    if (candidate.length > 0 && output.indexOf(candidate) === -1) output.push(candidate)
+  }
+  return output
+}
+
+function stringList(value) {
+  if (value === undefined || value === null) return []
+  if (Array.isArray(value)) return value.map(nonEmptyString).filter(function (item) {
+    return item.length > 0
+  })
+  return nonEmptyString(value).split(/[;,]/).map(nonEmptyString).filter(function (item) {
+    return item.length > 0
+  })
+}
+
+// NoDisplay entries are not launchable apps; they are helper/desktop integration
+// files. They are still worth considering last, never first.
+function entryHidden(entry) {
+  try {
+    return !!(entry && entry.noDisplay)
+  } catch (error) {
+    return false
+  }
 }
 
 function normalizedAppIdentity(value) {
@@ -334,11 +394,139 @@ function webIdentityLabel(identity) {
   return ""
 }
 
+// Tokens that identify an app but appear in too many window titles to be useful
+// on their own ("dev", "app", "web"). Matched tokens are dropped so they cannot
+// drag an unrelated entry into a match.
+var WEAK_TITLE_TOKENS = {
+  "app": true,
+  "apps": true,
+  "dev": true,
+  "default": true,
+  "file": true,
+  "files": true,
+  "new": true,
+  "old": true,
+  "run": true,
+  "shell": true,
+  "the": true,
+  "window": true
+}
+
+function meaningfulTokens(value) {
+  return lowerString(value).split(/[^a-z0-9]+/).filter(function (token) {
+    return token.length >= 3 && WEAK_TITLE_TOKENS[token] !== true
+  })
+}
+
+// Shell plugin windows are told apart by their window title. Three passes, most
+// specific first:
+//   1. the title is the entry's Name or id ("Olook" -> olook.desktop)
+//   2. the title is the entry's GenericName
+//   3. a title token appears in the entry's keywords/categories
+//      ("Omarchy Spotify" -> neon-spotify.desktop, Keywords=spotify;music)
+// Hidden entries only win when nothing visible matches.
+function matchTitleEntry(member, entries) {
+  var values = entries && typeof entries.length === "number" ? entries : []
+  var titles = memberTitleCandidates(member)
+  if (values.length === 0 || titles.length === 0) return null
+
+  var hiddenWinner = null
+  var i
+  var j
+
+  function betterThan(entry) {
+    if (!entryHidden(entry)) return entry
+    return hiddenWinner
+  }
+
+  for (i = 0; i < titles.length; i++) {
+    var titleCompact = compactIdentity(titles[i])
+    if (!titleCompact) continue
+
+    for (j = 0; j < values.length; j++) {
+      var entry = values[j]
+      if (!entry) continue
+
+      if (titleCompact === compactIdentity(objectString(entry, "name"))
+          || titleCompact === compactIdentity(desktopId(objectString(entry, "id")))) {
+        if (entryHidden(entry)) {
+          if (!hiddenWinner) hiddenWinner = entry
+        } else {
+          return entry
+        }
+      }
+    }
+  }
+
+  for (i = 0; i < titles.length; i++) {
+    var genericTitle = compactIdentity(titles[i])
+    if (!genericTitle) continue
+
+    for (j = 0; j < values.length; j++) {
+      var genericEntry = values[j]
+      if (!genericEntry || entryHidden(genericEntry)) continue
+      if (genericTitle === compactIdentity(objectString(genericEntry, "genericName"))) return genericEntry
+    }
+  }
+
+  var bestEntry = null
+  var bestScore = 0
+  for (i = 0; i < titles.length; i++) {
+    var tokens = meaningfulTokens(titles[i])
+    if (tokens.length === 0) continue
+
+    for (j = 0; j < values.length; j++) {
+      var tokenEntry = values[j]
+      if (!tokenEntry || entryHidden(tokenEntry)) continue
+
+      // Whole-token comparison only. Substring matching makes a title like
+      // "Omarchy shell - dev gallery" match CMake ("Development" contains
+      // "dev"), which is a wrong icon rather than no icon.
+      var haystack = {}
+      var haystackValues = [desktopId(objectString(tokenEntry, "id"))]
+        .concat(stringList(tokenEntry.keywords))
+        .concat(stringList(tokenEntry.categories))
+        .concat(stringList(tokenEntry.name))
+      for (var h = 0; h < haystackValues.length; h++) {
+        var entryTokens = meaningfulTokens(haystackValues[h])
+        for (var e2 = 0; e2 < entryTokens.length; e2++) haystack[entryTokens[e2]] = true
+      }
+
+      var score = 0
+      for (var k = 0; k < tokens.length; k++) {
+        if (haystack[tokens[k]] === true) score++
+      }
+      if (score > bestScore) {
+        bestScore = score
+        bestEntry = tokenEntry
+      }
+    }
+  }
+
+  return bestEntry || hiddenWinner
+}
+
 function matchDesktopEntry(member, entries) {
   var values = entries && typeof entries.length === "number" ? entries : []
   var candidates = memberIdentityCandidates(member)
   var i
   var j
+
+  // A runtime class says which shell hosts the window, never which app it is.
+  // Resolve by title first, and never let the runtime's own desktop entry win
+  // on the class below.
+  var runtimeClass = false
+  for (i = 0; i < candidates.length; i++) {
+    if (isRuntimeClass(candidates[i])) {
+      runtimeClass = true
+      break
+    }
+  }
+
+  if (runtimeClass) {
+    var titleEntry = matchTitleEntry(member, values)
+    if (titleEntry) return titleEntry
+  }
 
   for (i = 0; i < candidates.length; i++) {
     var candidateId = desktopId(candidates[i])
@@ -347,6 +535,7 @@ function matchDesktopEntry(member, entries) {
     for (j = 0; j < values.length; j++) {
       var exactEntry = values[j]
       if (!exactEntry) continue
+      if (runtimeClass && isRuntimeClass(candidateId)) continue
       if (desktopId(objectString(exactEntry, "id")) === candidateId
           || lowerString(objectString(exactEntry, "startupClass")) === candidateLower) {
         return exactEntry
@@ -399,7 +588,7 @@ function matchDesktopEntry(member, entries) {
 
     for (j = 0; j < values.length; j++) {
       var entry = values[j]
-      if (!entry) continue
+      if (!entry || entryHidden(entry)) continue
 
       var id = desktopId(objectString(entry, "id"))
       var startup = compactIdentity(objectString(entry, "startupClass"))
@@ -429,6 +618,9 @@ if (typeof module !== "undefined") {
     appGlyph: appGlyph,
     fallbackIconTint: fallbackIconTint,
     genericAppGlyph: genericAppGlyph,
-    matchDesktopEntry: matchDesktopEntry
+    isRuntimeClass: isRuntimeClass,
+    matchDesktopEntry: matchDesktopEntry,
+    matchTitleEntry: matchTitleEntry,
+    memberTitleCandidates: memberTitleCandidates
   }
 }

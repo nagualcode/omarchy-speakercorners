@@ -50,6 +50,15 @@ function appIdOf(wayland) {
   return wayland ? boundedString(wayland.appId, MAX_NAME_LENGTH) : ""
 }
 
+// The first title the window was mapped with. Every Omarchy shell plugin runs
+// as a window of the single Quickshell process, so wayland.appId is identical
+// ("org.quickshell") for all of them; the initial title is what identifies the
+// individual app once the window's own title starts changing.
+function initialTitleOf(toplevel) {
+  if (!toplevel || !toplevel.lastIpcObject) return ""
+  return boundedString(toplevel.lastIpcObject.initialTitle, MAX_TITLE_LENGTH)
+}
+
 // One card per occupied workspace. Includes the focused flag, logical monitor
 // dimensions for the card aspect ratio, and a window list sorted in reading
 // order (top-to-bottom, then left-to-right) so tiles overlap correctly.
@@ -82,6 +91,7 @@ function buildWorkspaces() {
       var wayland = tl.wayland ? tl.wayland : null
       windows.push({
         title: titleOf(tl),
+        initialTitle: initialTitleOf(tl),
         appId: appIdOf(wayland),
         wayland: wayland,
         x: g.x, y: g.y, w: g.w, h: g.h,

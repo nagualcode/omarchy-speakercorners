@@ -3322,15 +3322,22 @@ component GridCell: Item {
           id = w.wayland.appId.trim()
         }
 
-        var key = id.toLowerCase()
+        var title = (typeof w.title === "string") ? w.title.trim() : ""
+        var initialTitle = (typeof w.initialTitle === "string") ? w.initialTitle.trim() : ""
+
+        // Keying on appId alone merges every shell plugin window into one card,
+        // because they all report the class of the single Quickshell process.
+        // Windows with no usable title still collapse onto the class key.
+        var identity = initialTitle.length > 0 ? initialTitle : title
+        var key = (identity.length > 0 ? id + "|" + identity : id).toLowerCase()
         if (seen[key]) continue
         seen[key] = true
 
         out.push({
           appId: id,
           member: {
-            title: typeof w.title === "string" ? w.title : "",
-            initialTitle: typeof w.title === "string" ? w.title : "",
+            title: title,
+            initialTitle: initialTitle,
             className: id,
             initialClass: id,
             iconCandidates: id.length > 0 ? [id] : []
@@ -3346,21 +3353,18 @@ component GridCell: Item {
 
     function desktopEntry(member) {
       var entry = IconModel.matchDesktopEntry(member, wcard.desktopEntries)
-      var candidates = member && Array.isArray(member.iconCandidates)
-        ? member.iconCandidates
-        : []
+      var candidates = wcard.iconCandidates(member)
+      if (entry) return entry
 
-      if (!entry) {
-        for (var i = 0; i < candidates.length && !entry; i++) {
-          var candidate = String(candidates[i] || "").trim()
-          if (!candidate) continue
+      for (var i = 0; i < candidates.length && !entry; i++) {
+        var candidate = String(candidates[i] || "").trim()
+        if (!candidate) continue
 
-          try {
-            entry = DesktopEntries.byId(candidate)
-              || DesktopEntries.byId(candidate + ".desktop")
-              || DesktopEntries.heuristicLookup(candidate)
-          } catch (error) {}
-        }
+        try {
+          entry = DesktopEntries.byId(candidate)
+            || DesktopEntries.byId(candidate + ".desktop")
+            || DesktopEntries.heuristicLookup(candidate)
+        } catch (error) {}
       }
 
       return entry
@@ -3371,11 +3375,30 @@ component GridCell: Item {
       return value.length > 0 && value !== genericSource ? source : ""
     }
 
+    function iconCandidates(member) {
+      member = member && typeof member === "object" ? member : {}
+
+      var input = (Array.isArray(member.iconCandidates) ? member.iconCandidates.slice() : [])
+      var titles = typeof IconModel.memberTitleCandidates === "function"
+        ? IconModel.memberTitleCandidates(member)
+        : []
+      for (var t = 0; t < titles.length; t++) input.push(titles[t])
+
+      var out = []
+      for (var i = 0; i < input.length; i++) {
+        var candidate = String(input[i] || "").trim()
+        if (!candidate) continue
+        // "org.quickshell" resolves to the Quickshell logo for every shell
+        // plugin; it is a host class, never an app identity.
+        if (typeof IconModel.isRuntimeClass === "function" && IconModel.isRuntimeClass(candidate)) continue
+        if (out.indexOf(candidate) === -1) out.push(candidate)
+      }
+      return out
+    }
+
     function iconSource(member, entry) {
       if (entry === undefined) entry = wcard.desktopEntry(member)
-      var candidates = member && Array.isArray(member.iconCandidates)
-        ? member.iconCandidates
-        : []
+      var candidates = wcard.iconCandidates(member)
       var genericSource = wcard.genericIconSource()
 
       if (entry && entry.icon) {
