@@ -483,10 +483,13 @@ Item {
       windows.push({ address: addr, floating: floating, fullscreen: Number(c.fullscreen) || 0 })
     }
     if (windows.length === 0) return
-    // Majority wins: floating only when strictly more than half of the
-    // workspace floats, which also makes an all-tiled workspace float and an
-    // all-floating one tile.
-    var wantFloating = floatingCount * 2 > windows.length
+    // Unanimous workspaces flip; mixed ones follow the majority (a tie goes
+    // tiled). So: nothing floats -> float everything; everything floats ->
+    // tile everything; otherwise only convert when floating is the majority.
+    var wantFloating
+    if (floatingCount === 0) wantFloating = true
+    else if (floatingCount === windows.length) wantFloating = false
+    else wantFloating = floatingCount * 2 > windows.length
     root.allWindowsTiled = !wantFloating
     for (var j = 0; j < windows.length; j++) {
       var w = windows[j]
