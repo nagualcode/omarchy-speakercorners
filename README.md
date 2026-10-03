@@ -4,9 +4,9 @@
 > Hot corners that **speak** — and a floating command center that listens.
 
 **Speaker Corners** mashes an icon panel (bottom-left), a floating workspace switcher
-(bottom-center) and hot-corner actions (Omarchy menu, app dropdowns) into a
-single masked, click-through overlay. No window stack, no bloat — one surface,
-`~1.5 KB` of attitude per corner.
+(bottom-center), a smart app grid and hot-corner actions (Omarchy menu, app
+dropdowns) into a single masked, click-through overlay. No window stack, no
+bloat — one surface, `~1.5 KB` of attitude per corner.
 
 ![izi](https://img.shields.io/badge/omarchy-ready-blueviolet)
 ![hyprland](https://img.shields.io/badge/hyprland-native-2ea44f)
@@ -55,13 +55,26 @@ single masked, click-through overlay. No window stack, no bloat — one surface,
   button: hovering turns it into an **×** and clicking closes the workspace
   (every window on it). While it points at the empty/new workspace (`+`) there
   is nothing to close, so it stays a plain triangle.
-  The **apps button** at the right of the strip opens the Omarchy menu
-  straight into the applications list with a left-click and a terminal with a
-  right-click. Its glyph is the solid 2×2 grid `fa-th` (U+F00A) drawn from
-  **Font Awesome 7 Free Solid** in the theme accent color — no card
-  background, so it stays a bare, fully-opaque icon that tracks the current
-  theme (a previous `nf-md-apps`/U+F0192 attempt fell back to a clipboard
-  glyph because the installed Nerd Font does not carry it).
+  The **apps button** at the right of the strip opens a **smart app grid** with
+  a left-click and a terminal with a right-click. Its glyph is the solid 2×2
+  grid `fa-th` (U+F00A) drawn from **Font Awesome 7 Free Solid** in the theme
+  accent color — no card background, so it stays a bare, fully-opaque icon that
+  tracks the current theme (a previous `nf-md-apps`/U+F0192 attempt fell back to
+  a clipboard glyph because the installed Nerd Font does not carry it).
+- **🧲 Smart app grid** — left-clicking the apps button no longer borrows the
+  Omarchy menu; it opens a launcher of its own, built from the exact same app
+  library so it lists every app the menu lists. Six square cells per row, big
+  icons with the name underneath, centered just above the strip.
+  **The apps you actually use float to the front**: the most recently opened
+  app comes first, ties break by how often you have opened it, and apps you have
+  never opened follow alphabetically. Typing filters the grid with the same fuzzy
+  search the Omarchy menu uses (ranking is left alone while you type, so the
+  matches read like the menu's). Arrows move (and wrap), `Enter` launches,
+  `Esc` clears the search and then closes, `PageUp`/`PageDown`/`Home`/`End`
+  scroll, the wheel scrolls, and clicking outside dismisses it.
+  The ranking is remembered across reboots in
+  `${XDG_STATE_HOME:-~/.local/state}/speakercorners/app-usage.json` (max 400
+  apps). Bind it to a key with `omarchy-shell speakercorners-apps toggle`.
 - **🧊 Icon panel (bottom-left)** — a compact card nerd-friendly enough to live on:
   - **🕐 A clock** that opens the real menu-bar calendar when clicked.
   - **🔋 Smart icons** — battery (with plug/AC state), Wi-Fi (signal strength),
@@ -200,6 +213,8 @@ them somewhere.
 ## 🧱 Roof tiles
 
 - `Speakercorners.qml` — the whole single-surface overlay
+- `AppLauncherMenu.qml` — the smart app grid (search, square cells, keynav)
+- `AppUsage.js` — app ranking model (most recent first) + JSON persistence
 - `IconModel.js` — app icon resolution for the workspace cards (a faithful
   subset of Omarchy's HUD model)
 - `Workspaces.js` — Hyprland → plain-JS workspace model builder

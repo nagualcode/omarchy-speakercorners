@@ -67,6 +67,11 @@ Item {
   // ---- Per-surface open state -------------------------------------------
   property bool floatbarOpened: false
   property bool workspacesOpened: false
+  // The smart app menu the strip's launcher cell opens. Kept out of `anyOpen`
+  // on purpose: it is summoned by a cell inside the strip, so a generic
+  // `speakercorners toggle` must not treat it as one of the two corner
+  // surfaces and close it out from under a click.
+  property bool appMenuOpened: false
   // Keep the surfaces alive during the closing slide so the descent is
   // visible; cleared by the slide-out timers once the play-out ends.
   property bool fbSliding: false
@@ -77,8 +82,9 @@ Item {
   // sync so `omarchy-shell shell toggle speakercorners` round-trips cleanly.
   readonly property bool opened: root.anyOpen
   // The float bar takes full-screen keyboard focus; the workspace strip only
-  // swallows clicks through the mask and never needs the keyboard.
-  readonly property bool keysWanted: root.floatbarOpened
+  // swallows clicks through the mask and never needs the keyboard. The app
+  // menu is the exception: it is typed into, so it takes focus too.
+  readonly property bool keysWanted: root.floatbarOpened || root.appMenuOpened
 
   readonly property var appLibrary: root.shell ? root.shell.appLibrary : null
 
@@ -1829,6 +1835,7 @@ Item {
           root.screensaverUp = true
           root.stripShownBeforeScreensaver = root.workspacesOpened && !root.chromeHidden
           root.hideWorkspaces()
+          root.closeAppMenu()
         }
       }
       return
@@ -1890,6 +1897,26 @@ Item {
     return ws ? ws.id : null
   }
 
+  // ---- Smart app menu -----------------------------------------------------
+  // Opened by left-clicking the strip's launcher cell. It is this plugin's own
+  // launcher: same installed-app list and same search as the Omarchy menu's
+  // "apps" page, but ordered by use (most recently opened first) and persisted,
+  // with square icon-over-name cells instead of wide rows.
+  function openAppMenu() {
+    if (root.screensaverUp) return
+    // The two popups are modal in different ways and would fight over the same
+    // full-screen mask, so opening one closes the other.
+    root.closeWsConfig()
+    root.appMenuOpened = true
+  }
+
+  function closeAppMenu() {
+    if (!root.appMenuOpened) return
+    root.appMenuOpened = false
+  }
+
+  function toggleAppMenu() { root.appMenuOpened ? root.closeAppMenu() : root.openAppMenu() }
+
   // ========================================================================
   //  Shell panel contract + legacy IPC targets
   // ========================================================================
@@ -1901,6 +1928,7 @@ Item {
   function close() {
     root.closeFloatbar()
     root.hideWorkspaces()
+    root.closeAppMenu()
     return "ok"
   }
   function toggle() { root.anyOpen ? root.close() : root.open("") }
@@ -1911,6 +1939,7 @@ Item {
     return (root.anyOpen ? "open" : "closed")
       + " float=" + (root.floatbarOpened ? "1" : "0")
       + " ws=" + (root.workspacesOpened ? "1" : "0")
+      + " apps=" + (root.appMenuOpened ? "1" : "0")
   }
 
   IpcHandler {
@@ -1944,6 +1973,21 @@ Item {
     function close(): string { root.hideWorkspaces(); return "ok" }
     function toggle(): string { root.toggleWorkspaces(); return "ok" }
     function state(): string { return root.workspacesOpened ? "open" : "closed" }
+  }
+
+  // The smart app menu, so it can be bound to a key or summoned from a script:
+  //   omarchy-shell speakercorners apps toggle
+  IpcHandler {
+    target: "speakercorners-apps"
+    function open(): string { root.openAppMenu(); return "ok" }
+    function close(): string { root.closeAppMenu(); return "ok" }
+    function toggle(): string { root.toggleAppMenu(); return "ok" }
+    function state(): string { return root.appMenuOpened ? "open" : "closed" }
+    function geom(): string {
+      return appMenu.panelW + "x" + appMenu.panelH + " @" + appMenu.panelX + "," + appMenu.panelY
+        + " cell=" + appMenu.cellSize + " vrows=" + appMenu.visibleRows + " items=" + appMenu.rows.length
+        + " sel=" + appMenu.selectedIndex + " usage=" + appMenu.usage.entries
+    }
   }
 
   // Legacy target so existing commands and keybindings (`omarchy-shell mirador
@@ -1989,12 +2033,16 @@ Item {
     // on screen keeps receiving the pointer. Always-on: the four corner hot
     // zones. While the float bar is up the whole screen belongs to it (to
     // swallow outside clicks), and the workspace strip keeps its clicks while
-    // showing.
+    // showing. The app menu takes the full screen too — it is a modal panel,
+    // and it needs the keyboard for its search field.
     mask: Region {
-      // fullscreen block while the float bar is up
+      // fullscreen block while the float bar or the app menu is up
       Region { x: 0; y: 0; width: root.keysWanted ? panel.width : 0; height: root.keysWanted ? panel.height : 0 }
       // workspace strip clicks (and null while it is hidden)
       Region { x: root.stripX; y: root.stripY; width: root.workspacesOpened ? root.stripW : 0; height: root.workspacesOpened ? root.stripH : 0 }
+      // smart app menu (the panel only; it brings its own outside-click
+      // catcher, which the fullscreen block above already makes clickable)
+      Region { x: appMenu.panelX; y: appMenu.panelY; width: root.appMenuOpened ? appMenu.panelW : 0; height: root.appMenuOpened ? appMenu.panelH : 0 }
       // workspace configuration popup (while open)
       Region { x: root.wsConfigPopupX; y: root.wsConfigPopupY; width: root.wsConfigOpen ? root.wsConfigPopupW : 0; height: root.wsConfigOpen ? root.wsConfigPopupH : 0 }
       // fullscreen block while the config popup is open (outside clicks dismiss it)
@@ -2131,8 +2179,9 @@ Item {
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: root.wsCardGap
 
-        // App launcher card: left-click opens the Omarchy menu straight into
-        // the applications list, right-click opens a terminal.
+        // App launcher card: left-click opens this plugin's own smart app menu
+        // (same app list and search as the Omarchy menu, ordered by use), and
+        // right-click opens a terminal.
         Item {
           width: root.effectiveWsCardWidth
           height: root.wsCardPreviewH
@@ -2143,8 +2192,8 @@ Item {
           // Solid app-grid glyph (fa-th, U+F00A) from Font Awesome 7 Free --
           // the family this strip already falls back to for its icons. No
           // card background: a bare, fully-opaque accent glyph that fills the
-          // whole preview cell. Left opens the applications list, right opens
-          // the terminal.
+          // whole preview cell. Left opens the app menu, right opens the
+          // terminal.
           Text {
             width: root.effectiveWsCardWidth
             height: root.wsCardPreviewH
@@ -2171,13 +2220,13 @@ Item {
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             acceptedButtons: Qt.LeftButton | Qt.RightButton
-            // Left opens the applications list (not the full omarchy menu
-            // "root"); right opens the terminal.
+            // Left opens this plugin's own app menu (not the omarchy-menu "apps"
+            // page); right opens the terminal.
             onClicked: function(mouse) {
               if (mouse.button === Qt.RightButton) {
                 Quickshell.execDetached(["omarchy-launch-terminal"])
               } else {
-                Quickshell.execDetached(["omarchy-shell", "shell", "toggle", "omarchy.menu", '{"menu":"apps"}'])
+                root.openAppMenu()
               }
             }
           }
@@ -2570,6 +2619,21 @@ Item {
       }
     }
 
+    // ---- Smart app menu ----
+    // Fills the window so its own outside-click catcher reaches every corner
+    // and its geometry can be read for the mask above. Above the strip and the
+    // configuration popup, both of which it dismisses on the way out.
+    AppLauncherMenu {
+      id: appMenu
+      z: 8
+      anchors.fill: parent
+      appLibrary: root.appLibrary
+      open: root.appMenuOpened
+      surfaceOpacity: root.wsOpacity
+      accentColor: root.wsStripAccent
+      onDismissRequested: root.closeAppMenu()
+    }
+
     // ---- Optional bottom edge (opt-in) ----
     Item {
       visible: root.wsEdgeEnabled
@@ -2587,7 +2651,7 @@ Item {
     // position read through Hyprland (see sampleCursorPos), so an overlay
     // surface that sits on top in a corner cannot swallow the trigger.
 
-    // ---- Keyboard routing (float bar only) ----
+    // ---- Keyboard routing (float bar + app menu) ----
     Item {
       id: keyRouter
       anchors.fill: parent
@@ -2595,7 +2659,15 @@ Item {
       enabled: root.keysWanted
       Keys.priority: Keys.BeforeItem
       Keys.onPressed: function(event) {
-        if (root.floatbarOpened && event.key === Qt.Key_Escape) {
+        if (event.key !== Qt.Key_Escape) return
+        // The app menu's own field eats Escape first when a query is typed, so
+        // anything landing here is "close".
+        if (root.appMenuOpened) {
+          root.closeAppMenu()
+          event.accepted = true
+          return
+        }
+        if (root.floatbarOpened) {
           root.closeFloatbar()
           event.accepted = true
         }
