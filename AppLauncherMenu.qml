@@ -23,7 +23,7 @@ Item {
   property var appLibrary: null
   property bool open: false
   // Same transparency the workspace strip uses, so both surfaces look related.
-  property real surfaceOpacity: 0.97
+  property real surfaceOpacity: 1.0
   // Set by the host to the strip's accent color, so the launcher cell and the
   // menu it opens share a highlight color.
   property color accentColor: Color.accent
@@ -466,6 +466,7 @@ Item {
         selectedTextColor: Color.menu.text
         font.family: Style.font.menuFamily
         font.pixelSize: Style.font.subtitle
+        cursorVisible: false
         // Bound, not assigned: only the user's own edits are reported back, so
         // a programmatic reset of menu.query still reaches the field.
         text: menu.query
@@ -557,6 +558,8 @@ Item {
               mipmap: true
               asynchronous: true
               cache: true
+              sourceSize.width: width * Screen.devicePixelRatio
+              sourceSize.height: height * Screen.devicePixelRatio
             }
 
             Text {

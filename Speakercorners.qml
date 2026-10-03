@@ -2631,7 +2631,7 @@ Item {
       anchors.fill: parent
       appLibrary: root.appLibrary
       open: root.appMenuOpened
-      surfaceOpacity: root.wsOpacity
+      surfaceOpacity: 1.0
       accentColor: root.wsStripAccent
       onDismissRequested: root.closeAppMenu()
     }
