@@ -119,6 +119,11 @@ Item {
   property bool wsShowAppMenu: true
   property bool wsShowOmafile: true
   property bool wsShowNewWs: true
+  // Clicking a workspace card lands with no transition at all: the strip
+  // suppresses Hyprland's animations just long enough for the switch to warp
+  // into place. Every other workspace change (touchpad gesture, keybind, the
+  // "+" button) keeps the animated macOS-style transition.
+  property bool wsInstantSwitch: true
   // Disabling the bottom-center toggle pins the strip on screen: it no longer
   // waits for a mouse trigger to appear and no longer auto-hides.
   readonly property bool wsAlwaysVisible: !root.wsToggleEnabled
@@ -179,6 +184,7 @@ Item {
     root.wsShowAppMenu = setting("wsShowAppMenu", true) !== false
     root.wsShowOmafile = setting("wsShowOmafile", true) !== false
     root.wsShowNewWs = setting("wsShowNewWs", true) !== false
+    root.wsInstantSwitch = setting("wsInstantSwitch", true) !== false
     root.wsNeonEnabled = setting("wsNeonEnabled", false) !== false
     root.configLoaded = true
   }
@@ -1187,7 +1193,9 @@ Item {
   }
 
   readonly property int wsConfigPopupW: Style.space(260)
-  readonly property int wsConfigPopupH: Style.space(504)
+  // Tall enough for the title, four sliders and every toggle row, including
+  // "Instant switch".
+  readonly property int wsConfigPopupH: Style.space(538)
   readonly property int wsConfigPopupX: Math.max(0, Math.round(root.stripX + (root.stripW - root.wsConfigPopupW) / 2))
   readonly property int wsConfigPopupY: Math.max(0, root.stripY - root.wsConfigPopupH - Style.space(12))
 
@@ -1213,6 +1221,7 @@ Item {
         cfg.plugins[i].wsShowAppMenu = root.wsShowAppMenu === true
         cfg.plugins[i].wsShowOmafile = root.wsShowOmafile === true
         cfg.plugins[i].wsShowNewWs = root.wsShowNewWs === true
+        cfg.plugins[i].wsInstantSwitch = root.wsInstantSwitch === true
         cfg.plugins[i].wsNeonEnabled = root.wsNeonEnabled === true
         found = true
       }
@@ -1230,6 +1239,7 @@ Item {
         wsShowAppMenu: root.wsShowAppMenu === true,
         wsShowOmafile: root.wsShowOmafile === true,
         wsShowNewWs: root.wsShowNewWs === true,
+        wsInstantSwitch: root.wsInstantSwitch === true,
         wsNeonEnabled: root.wsNeonEnabled === true
       })
     }
@@ -1705,6 +1715,31 @@ Item {
     })
   }
 
+  // Same switch as focusWorkspace, but with Hyprland's animations suppressed
+  // for the one tick it takes the compositor to register the workspace
+  // animation, so the click lands instantly instead of sliding.
+  //
+  // `hyprctl keyword animations:enabled false` is deliberately not used: since
+  // Hyprland 0.55's Lua config parser it answers "keyword can't work with
+  // non-legacy parsers". `hl.config` walks only the keys present in the table
+  // (src/config/lua/bindings/LuaBindingsConfigRules.cpp), so `animations.enabled`
+  // is the single value this touches.
+  //
+  // The restore is deferred by a compositor-side one-shot instead of running
+  // inline because CHyprAnimationManager::tick() decides to warp an animated
+  // variable (jump straight to its end state) by reading `animations:enabled` at
+  // tick time, and the first tick is only scheduled ~1ms after the switch
+  // registers its animated variables. Re-enabling inside the same request would
+  // land before that tick and the slide would animate as usual. Both timers sit
+  // on the same event loop and fire in timeout order, so the 1ms tick always
+  // wins. The restored value mirrors animations.enabled in ~/.config/hypr/looknfeel.lua.
+  function focusWorkspaceNoAnim(target) {
+    var lua = 'hl.config({ animations = { enabled = false } })'
+      + ' pcall(hl.dispatch, hl.dsp.focus({ workspace = "' + root.luaStringLiteral(target) + '" }))'
+      + ' hl.timer(function() hl.config({ animations = { enabled = true } }) end, { timeout = 60, type = "oneshot" })'
+    Quickshell.execDetached(["hyprctl", "eval", lua])
+  }
+
   // Switch to the workspace behind a clicked card. Omarchy runs Hyprland in
   // Lua mode, so workspace focus goes through the Lua dispatcher expression
   // rather than the plain "workspace <id>" dispatcher (which errors under
@@ -1713,6 +1748,10 @@ Item {
     root.closeWsConfig()
     if (!ws) return
     var target = (ws.name && String(ws.name).length > 0) ? String(ws.name) : String(ws.id)
+    if (root.wsInstantSwitch) {
+      root.focusWorkspaceNoAnim(target)
+      return
+    }
     var expr = 'hl.dsp.focus({ workspace = "' + root.luaStringLiteral(target) + '" })'
     Quickshell.execDetached(["hyprctl", "dispatch", expr])
   }
@@ -2471,6 +2510,17 @@ Item {
                 wsConfigPeel.restart()
               }
             }
+          }
+        }
+
+        MiniToggle {
+          width: parent.width
+          label: "Instant switch"
+          checked: root.wsInstantSwitch
+          onToggled: function(v) {
+            root.wsInstantSwitch = v
+            root.persistWorkspaceSettings()
+            wsConfigPeel.restart()
           }
         }
 

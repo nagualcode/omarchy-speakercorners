@@ -42,6 +42,12 @@ single masked, click-through overlay. No window stack, no bloat — one surface,
   workspace. A small triangle at the strip's base points up at the active
   workspace. Its distance to the screen bottom is set by `wsStripGap` (a `Gap`
   slider in the settings popup).
+  Clicking a card switches workspaces **instantly** (`wsInstantSwitch`, on by
+  default, toggled in the same popup): the strip suppresses Hyprland's
+  animations just long enough for the compositor to warp the switch into
+  place, so no slide plays. Every other workspace change — the touchpad
+  gesture, keybinds, the `+` button — keeps the animated macOS-style
+  transition configured in `~/.config/hypr/looknfeel.lua`.
   Workspace cards always render the actual, full-color app icons; the tile
   background/border is dropped for a bare, Dock-like look
   (`wsStripRealIcons` is always on — there is no generic glyph fallback).
@@ -111,6 +117,7 @@ Settings live in the `speakercorners` entry of
   "wsScale": 0.5,           // workspace strip scale (height multiplier)
   "wsStripGap": 21,         // gap between the strip and the screen bottom
   "wsStripRealIcons": true, // always real, full-color app icons in the cards
+  "wsInstantSwitch": true,  // card clicks switch workspace with no animation
   "floatGridOrder": [
     "action:browser",
     "action:terminal",
