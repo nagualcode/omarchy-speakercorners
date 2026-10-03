@@ -160,11 +160,14 @@ Edit `actionEntries` to change them.
 | `bottomRightAction` | `command` / `mirador` / `none` — workspace overview by default |
 | `bottomCenterAction`| `command` / `none` — workspace strip by default     |
 
-`toggle-window-modes` cycles the active workspace between everything-tiled
-and everything-floating. When going tiled it also understands that a
-fullscreen/maximized window would keep swallowing the split: with more than
-one window on the workspace it pulls such a window back out of fullscreen so
-the screen genuinely divides between the apps. `toggle-hide-chrome` hides the
+`toggle-window-modes` arranges the active workspace by majority instead of
+blindly flipping: if every window floats it goes tiled, if every window is tiled
+it goes floating, and a mixed workspace follows the majority (the minority
+windows are converted; a tie resolves to tiled). When going tiled it also
+understands that a fullscreen/maximized window would keep swallowing the split:
+with more than one window on the workspace it pulls such a window back out of
+fullscreen so the screen genuinely divides between the apps.
+`toggle-hide-chrome` hides the
 workspace strip, bar and panel layer (bottom-left corner); both can also be
 triggered over IPC with `omarchy-shell speakercorners triggeraction <name>`.
 

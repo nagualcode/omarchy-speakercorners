@@ -444,14 +444,14 @@ Item {
   }
 
   // Toggle every window on the active workspace between tiling and floating.
-  // The top-right hot corner calls this: the first dwell tiles everything
-  // (windows already tiled stay tiled), the next dwell floats everything.
-  // hl.dsp.window.float set/unset are toggles in this build, so each window
-  // is only dispatched to when its current state differs from the target.
+  // The top-right hot corner calls this. The target is not a blind flip: the
+  // workspace is read first and the majority decides. All floating -> go tiled,
+  // all tiled -> go floating, mixed -> the minority joins the majority (a tie
+  // resolves to tiled). hl.dsp.window.float set/unset are toggles in this
+  // build, so each window is only dispatched to when its state differs.
   property bool allWindowsTiled: false
   property var allTargetWsId: null
   function toggleAllWindowModes() {
-    root.allWindowsTiled = !root.allWindowsTiled
     root.allTargetWsId = root.focusedWorkspaceId
     wsClientsProc.running = true
   }
@@ -470,16 +470,24 @@ Item {
     var list = []
     try { list = JSON.parse(text || "[]") } catch (e) { return }
     if (!Array.isArray(list)) return
-    var wantFloating = !root.allWindowsTiled
     var windows = []
+    var floatingCount = 0
     for (var i = 0; i < list.length; i++) {
       var c = list[i]
       if (!c || c.mapped === false || c.hidden === true) continue
       if (!c.workspace || Number(c.workspace.id) !== wsId) continue
       var addr = String(c.address || "")
       if (!/^0x[0-9a-fA-F]+$/.test(addr)) continue
-      windows.push({ address: addr, floating: c.floating === true, fullscreen: Number(c.fullscreen) || 0 })
+      var floating = c.floating === true
+      if (floating) floatingCount++
+      windows.push({ address: addr, floating: floating, fullscreen: Number(c.fullscreen) || 0 })
     }
+    if (windows.length === 0) return
+    // Majority wins: floating only when strictly more than half of the
+    // workspace floats, which also makes an all-tiled workspace float and an
+    // all-floating one tile.
+    var wantFloating = floatingCount * 2 > windows.length
+    root.allWindowsTiled = !wantFloating
     for (var j = 0; j < windows.length; j++) {
       var w = windows[j]
       if (w.floating !== wantFloating) {
