@@ -4,6 +4,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "AppUsage.js" as AppUsage
+import "AppSearchShim.js" as AppSearchShim
 
 // Smart app menu summoned by the workspace strip's launcher cell.
 //
@@ -112,13 +113,40 @@ Item {
   }
 
   // ---- Model -------------------------------------------------------------
+  // Fallback library using Quickshell's DesktopEntries directly (works when
+  // scoped shell API doesn't inject appLibrary for this third-party plugin).
+  readonly property var fallbackLibrary: ({
+    entryName: function(entry) { return AppSearchShim.entryName(entry) },
+    entrySubtext: function(entry) { return AppSearchShim.entrySubtext(entry) },
+    sortedEntries: function(query) {
+      var values = DesktopEntries.applications.values || []
+      return AppSearchShim.sortedEntries(values, String(query || ""))
+    },
+    iconSource: function(icon) {
+      var v = String(icon || "")
+      if (!v) return Quickshell.iconPath("application-x-executable", true)
+      if (v.indexOf("file://")===0 || v.indexOf("image://")===0) return v
+      if (v.charAt(0)==="/") return Util.fileUrl(v)
+      var themed = Quickshell.iconPath(v, true)
+      if (themed.length>0) return themed
+      return Quickshell.iconPath("application-x-executable", true)
+    },
+    launch: function(desktopId, name) {
+      var id = String(desktopId || "")
+      if (!id) return
+      Util.execDetached("uwsm-app -- gtk-launch " + Util.shellQuote(id + ".desktop"))
+    }
+  })
+
+  readonly property var activeLibrary: menu.appLibrary || menu.fallbackLibrary
+
   function rowFor(entry) {
     var id = String((entry && entry.id) || "")
     if (!id) return null
-    var name = menu.appLibrary ? menu.appLibrary.entryName(entry) : String(entry.name || "")
+    var name = menu.activeLibrary ? menu.activeLibrary.entryName(entry) : String(entry.name || "")
     if (!name) return null
 
-    var subtext = menu.appLibrary ? menu.appLibrary.entrySubtext(entry) : String(entry.genericName || "")
+    var subtext = menu.activeLibrary ? menu.activeLibrary.entrySubtext(entry) : String(entry.genericName || "")
     var icon = String((entry && entry.icon) || "")
 
     return {
@@ -134,14 +162,14 @@ Item {
   // fuzzy score, which is what the Omarchy menu searches with. Only the
   // unfiltered grid gets the usage ordering laid on top.
   function rebuild() {
-    if (!menu.appLibrary) {
+    if (!menu.activeLibrary) {
       menu.rows = []
       return
     }
 
     var sorted
     try {
-      sorted = menu.appLibrary.sortedEntries(menu.query) || []
+      sorted = menu.activeLibrary.sortedEntries(menu.query) || []
     } catch (e) {
       menu.rows = []
       return
@@ -160,9 +188,9 @@ Item {
   function iconFor(row) {
     if (!row) return ""
     var icon = String(row.icon || "")
-    if (menu.appLibrary && typeof menu.appLibrary.iconSource === "function") {
+    if (menu.activeLibrary && typeof menu.activeLibrary.iconSource === "function") {
       try {
-        var source = menu.appLibrary.iconSource(icon)
+        var source = menu.activeLibrary.iconSource(icon)
         if (source) return source
       } catch (e) { }
     }
@@ -243,7 +271,7 @@ Item {
     var target = row || menu.currentRow
     if (!target || !target.id) return
     menu.recordLaunch(target)
-    if (menu.appLibrary) menu.appLibrary.launch(target.id, target.name)
+    if (menu.activeLibrary) menu.activeLibrary.launch(target.id, target.name)
     menu.launched(target.id, target.name)
     menu.dismissRequested()
   }
@@ -341,7 +369,7 @@ Item {
   Component.onCompleted: if (!usageDirProcess.running) usageDirProcess.running = true
 
   Connections {
-    target: menu.appLibrary
+    target: menu.appLibrary || null
     // Desktop entries can arrive after this component does (the shell's
     // watcher fires late on a cold start), so keep the grid in step.
     function onAppsChanged() { if (menu.open) menu.rebuild() }

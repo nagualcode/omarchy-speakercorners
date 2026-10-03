@@ -86,7 +86,9 @@ Item {
   // menu is the exception: it is typed into, so it takes focus too.
   readonly property bool keysWanted: root.floatbarOpened || root.appMenuOpened
 
-  readonly property var appLibrary: root.shell ? root.shell.appLibrary : null
+  readonly property var appLibrary: root.shell
+    ? (root.shell.appLibrary || (typeof root.shell.n === "object" ? root.shell.n : null))
+    : null
 
   // ---- Hot-corner settings (read from the plugins[] entry) ---------------
   property var pluginSettings: ({})
@@ -1986,7 +1988,7 @@ Item {
     function geom(): string {
       return appMenu.panelW + "x" + appMenu.panelH + " @" + appMenu.panelX + "," + appMenu.panelY
         + " cell=" + appMenu.cellSize + " vrows=" + appMenu.visibleRows + " items=" + appMenu.rows.length
-        + " sel=" + appMenu.selectedIndex + " usage=" + appMenu.usage.entries
+        + " sel=" + appMenu.selectedIndex + " lib=" + (root.appLibrary ? "1" : "0") + " aclib=" + (appMenu.appLibrary ? "1" : "0") + " shellHasLib=" + ((root.shell && root.shell.appLibrary) ? "1" : "0")
     }
   }
 
