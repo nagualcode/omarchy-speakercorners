@@ -24,6 +24,10 @@ Item {
   property bool open: false
   // Same transparency the workspace strip uses, so both surfaces look related.
   property real surfaceOpacity: 1.0
+  // Mirrors the strip's neon setting so the menu's border matches the strip it
+  // was opened from (the strip paints either its neon glow or the popup border).
+  property bool neonEnabled: false
+  property color neonGlow: Color.accent
   // Set by the host to the strip's accent color, so the launcher cell and the
   // menu it opens share a highlight color.
   property color accentColor: Color.accent
@@ -353,8 +357,14 @@ Item {
     menu.selectedIndex = 0
     menu.hoveredIndex = -1
     menu.rebuild()
+    // Always reopen on the first row: a scroll position left over from the
+    // previous summon must not decide which row the menu starts on.
+    gridFlick.contentY = 0
     Qt.callLater(function() {
-      if (menu.open) searchInput.forceActiveFocus()
+      if (menu.open) {
+        gridFlick.contentY = 0
+        searchInput.forceActiveFocus()
+      }
     })
   }
 
@@ -419,8 +429,12 @@ Item {
     width: menu.panelW
     height: menu.panelH
     radius: Style.cornerRadius
-    color: Util.alpha(Color.menu.background, menu.surfaceOpacity)
-    borderSpec: Border.surfaceSpec("menu", "border", Color.menu.border, Math.max(1, Style.space(2)))
+    // Same surface family as the workspace strip (Color.popups.*) at the
+    // strip's own opacity, so the menu reads as an extension of the strip.
+    color: Util.alpha(Color.popups.background, menu.surfaceOpacity)
+    borderSpec: menu.neonEnabled
+      ? Border.flat(menu.neonGlow, Math.max(1, Style.space(2)))
+      : Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
     padding: menu.panelPad
 
     // Faded rather than popped, like the strip. `visible` tracks the fade so

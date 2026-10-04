@@ -2662,7 +2662,11 @@ Item {
       anchors.fill: parent
       appLibrary: root.appLibrary
       open: root.appMenuOpened
-      surfaceOpacity: 1.0
+      // The menu shares the strip's surface: same opacity (the strip's own
+      // transparency setting) and same border family, neon included.
+      surfaceOpacity: root.wsOpacity
+      neonEnabled: root.wsNeonEnabled
+      neonGlow: root.wsNeonGlow
       accentColor: root.wsStripAccent
       rowsLimit: root.appMenuRows
       stripTop: root.stripY
