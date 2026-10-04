@@ -1443,5 +1443,109 @@ TestCase {
     verify(newPrimaryArea >= oldPrimaryArea, "Focused primary card must be at least as large")
     verify(newFocused3.rail.width > oldFocused3.rail.width, "Secondary rail width must be larger with tightened spacing")
   }
+
+  // ── Capped Exposé arrangement (bottom-right viewer) ────────────────────────
+  function assertCappedExpoInvariants(cells, sizes, areaX, areaY, areaWidth, areaHeight,
+                                      outerMargin, label) {
+    compare(cells.length, sizes.length)
+    var availW = Math.max(1, areaWidth - outerMargin * 2)
+    var availH = Math.max(1, areaHeight - outerMargin * 2)
+    var cap = 0.25 * availW * availH
+    for (var i = 0; i < cells.length; i++) {
+      verify(cells[i].width > 0 && cells[i].height > 0,
+        label + ": cell " + i + " must stay visible")
+      var area = cells[i].width * cells[i].height
+      verify(area <= cap + 0.5,
+        label + ": cell " + i + " area " + area + " must be capped at " + cap)
+      fuzzyCompare(cells[i].width / cells[i].height, sizes[i].width / sizes[i].height)
+      verify(cells[i].x >= areaX - 0.5 && cells[i].y >= areaY - 0.5
+        && cells[i].x + cells[i].width <= areaX + areaWidth + 0.5
+        && cells[i].y + cells[i].height <= areaY + areaHeight + 0.5,
+        label + ": cell " + i + " must stay inside the area")
+      for (var j = i + 1; j < cells.length; j++) {
+        var ox = Math.min(cells[i].x + cells[i].width, cells[j].x + cells[j].width)
+          - Math.max(cells[i].x, cells[j].x)
+        var oy = Math.min(cells[i].y + cells[i].height, cells[j].y + cells[j].height)
+          - Math.max(cells[i].y, cells[j].y)
+        verify(!(ox > 0.001 && oy > 0.001),
+          label + ": cells " + i + " and " + j + " must never overlap")
+      }
+    }
+  }
+
+  function test_expoCappedGrid_singleWindowIsAQuarterAreaAndCentered() {
+    var sizes = [{ width: 1600, height: 900 }]
+    var cells = WindowGeometry.expoLayout(sizes, 0, 0, 1000, 1000, 10,
+      { outerMargin: 10, maxAreaFraction: 0.25 })
+    assertCappedExpoInvariants(cells, sizes, 0, 0, 1000, 1000, 10, "single capped")
+    fuzzyCompare(cells[0].width * cells[0].height, 0.25 * (1000 - 20) * (1000 - 20))
+    fuzzyCompare(cells[0].x + cells[0].width / 2, 500)
+    fuzzyCompare(cells[0].y + cells[0].height / 2, 500)
+  }
+
+  function test_expoCappedGrid_fourWindowsFillTheQuadrants() {
+    var s = { width: 1600, height: 900 }
+    var sizes = [s, s, s, s]
+    var cells = WindowGeometry.expoLayout(sizes, 0, 0, 1600, 900, 10,
+      { outerMargin: 10, maxAreaFraction: 0.25 })
+    assertCappedExpoInvariants(cells, sizes, 0, 0, 1600, 900, 10, "four capped")
+    var total = 0
+    for (var i = 0; i < cells.length; i++) total += cells[i].width * cells[i].height
+    var avail = (1600 - 20) * (900 - 20)
+    verify(total > 0.9 * avail,
+      "four windows should nearly fill the usable area, got " + (total / avail))
+  }
+
+  function test_expoCappedGrid_neverExceedsQuarterAreaForMixedAspects() {
+    var sizes = [
+      { width: 1920, height: 1080 },
+      { width: 800, height: 1200 },
+      { width: 500, height: 200 },
+      { width: 900, height: 900 },
+      { width: 640, height: 480 },
+      { width: 3840, height: 1080 },
+      { width: 300, height: 900 }
+    ]
+    var cells = WindowGeometry.expoLayout(sizes, 0, 0, 1600, 900, 10,
+      { outerMargin: 10, maxAreaFraction: 0.25 })
+    assertCappedExpoInvariants(cells, sizes, 0, 0, 1600, 900, 10, "mixed capped")
+  }
+
+  function test_expoCappedGrid_isDeterministicAndKeepsOrder() {
+    var sizes = [
+      { width: 1600, height: 900 }, { width: 800, height: 1200 },
+      { width: 900, height: 900 }, { width: 400, height: 300 }
+    ]
+    var first = WindowGeometry.expoLayout(sizes, 0, 0, 1600, 900, 10,
+      { outerMargin: 10, maxAreaFraction: 0.25 })
+    var second = WindowGeometry.expoLayout(sizes, 0, 0, 1600, 900, 10,
+      { outerMargin: 10, maxAreaFraction: 0.25 })
+    for (var i = 0; i < first.length; i++) {
+      fuzzyCompare(second[i].x, first[i].x)
+      fuzzyCompare(second[i].y, first[i].y)
+      fuzzyCompare(second[i].width, first[i].width)
+      fuzzyCompare(second[i].height, first[i].height)
+      compare(first[i].index, i)
+    }
+  }
+
+  function test_expoCappedGrid_centresTheComposition() {
+    var s = { width: 1600, height: 900 }
+    var sizes = [s, s, s]
+    var cells = WindowGeometry.expoLayout(sizes, 0, 0, 1600, 900, 10,
+      { outerMargin: 10, maxAreaFraction: 0.25 })
+    var minX = Infinity
+    var minY = Infinity
+    var maxX = -Infinity
+    var maxY = -Infinity
+    for (var i = 0; i < cells.length; i++) {
+      minX = Math.min(minX, cells[i].x)
+      minY = Math.min(minY, cells[i].y)
+      maxX = Math.max(maxX, cells[i].x + cells[i].width)
+      maxY = Math.max(maxY, cells[i].y + cells[i].height)
+    }
+    fuzzyCompare((minX + maxX) / 2, 800)
+    fuzzyCompare((minY + maxY) / 2, 450)
+  }
 }
 

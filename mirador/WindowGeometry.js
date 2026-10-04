@@ -674,7 +674,13 @@ function aspectFitRect(itemWidth, itemHeight, region) {
 //
 // Input order is the caller's order and is never re-sorted: previews keep their
 // index (and therefore their cell) while windows are opened, moved or closed.
-function expoLayout(sizes, areaX, areaY, areaWidth, areaHeight, spacing) {
+function expoLayout(sizes, areaX, areaY, areaWidth, areaHeight, spacing, options) {
+  // A caller that wants the Exposé overlay arrangement (every window packed as
+  // large as the 1/4-area cap allows, centred, with an outer margin) opts in
+  // through `options`. Workspace cards keep the default recursive solver.
+  if (options && finiteNumber(options.maxAreaFraction) > 0)
+    return expoLayoutCappedGrid(sizes, areaX, areaY, areaWidth, areaHeight, spacing, options)
+
   var originX = finiteNumber(areaX) || 0
   var originY = finiteNumber(areaY) || 0
   var usableWidth = Math.max(1, finiteNumber(areaWidth) || 1)
@@ -786,6 +792,155 @@ function expoLayout(sizes, areaX, areaY, areaWidth, areaHeight, spacing) {
       })
     }
   }
+}
+
+// ── Capped Exposé arrangement ───────────────────────────────────────────────
+// Overlay arrangement for the current-workspace Exposé. It is driven by the
+// caller's rules instead of the recursive solver above:
+//   * every window keeps its real aspect ratio and never overlaps another;
+//   * each window's area is capped at `maxAreaFraction` of the usable area;
+//   * a uniform cell grid is chosen to occupy as much of the screen as the cap
+//     allows (candidate grids are scored by the total area of their windows);
+//   * ragged rows are centred and the whole composition is centred in the area.
+// `outerMargin` keeps previews off the screen edges; `spacing` is the gap
+// between neighbouring windows. Input order is preserved so no preview ever
+// swaps the cell that belongs to its index.
+function expoLayoutCappedGrid(sizes, areaX, areaY, areaWidth, areaHeight, spacing, options) {
+  var originX = finiteNumber(areaX) || 0
+  var originY = finiteNumber(areaY) || 0
+  var viewW = Math.max(1, finiteNumber(areaWidth) || 1)
+  var viewH = Math.max(1, finiteNumber(areaHeight) || 1)
+  var gap = Math.max(0, finiteNumber(spacing) || 0)
+
+  var margin = Math.max(0, finiteNumber(options && options.outerMargin) || 0)
+  // Never let the margin eat the whole viewport on a tiny area.
+  margin = Math.min(margin, Math.max(0, (Math.min(viewW, viewH) - 1) / 2))
+  var areaX0 = originX + margin
+  var areaY0 = originY + margin
+  var availW = Math.max(1, viewW - margin * 2)
+  var availH = Math.max(1, viewH - margin * 2)
+
+  var fraction = finiteNumber(options && options.maxAreaFraction)
+  if (!(fraction > 0)) fraction = 1
+  var cap = fraction * availW * availH
+
+  var items = []
+  var count = (sizes && typeof sizes.length === "number") ? sizes.length : 0
+  for (var i = 0; i < count; i++) {
+    var size = sizes[i] || {}
+    var itemWidth = Math.max(1, finiteNumber(size.width) || 1)
+    var itemHeight = Math.max(1, finiteNumber(size.height) || 1)
+    items.push({ index: i, aspect: itemWidth / itemHeight })
+  }
+  if (items.length === 0) return []
+
+  var targetAspect = availW / availH
+  var best = null
+
+  // Try every row count; the balanced distributions keep rows even and the
+  // input order contiguous (never sorted, so a preview keeps its cell).
+  for (var rows = 1; rows <= count; rows++) {
+    var dists = getBalancedRowDistributions(count, rows)
+    for (var d = 0; d < dists.length; d++) {
+      var dist = dists[d]
+      var columns = 0
+      for (var c = 0; c < dist.length; c++)
+        if (dist[c] > columns) columns = dist[c]
+      if (columns <= 0) continue
+
+      var cellW = (availW - gap * (columns - 1)) / columns
+      var cellH = (availH - gap * (rows - 1)) / rows
+      if (!(cellW > 0) || !(cellH > 0)) continue
+
+      var rects = new Array(count)
+      var totalArea = 0
+      var idx = 0
+      var curY = areaY0
+      for (var r = 0; r < rows; r++) {
+        var k = dist[r]
+        var rowW = k * cellW + gap * (k - 1)
+        var rowX = areaX0 + (availW - rowW) / 2
+        for (var col = 0; col < k; col++) {
+          var aspect = items[idx].aspect
+          var w = Math.min(cellW, cellH * aspect)
+          var h = w / aspect
+          var area = w * h
+          if (cap > 0 && area > cap) {
+            var shrink = Math.sqrt(cap / area)
+            w *= shrink
+            h *= shrink
+            area = w * h
+          }
+          rects[idx] = {
+            index: idx,
+            x: rowX + col * (cellW + gap) + (cellW - w) / 2,
+            y: curY + (cellH - h) / 2,
+            width: w,
+            height: h
+          }
+          totalArea += area
+          idx++
+        }
+        curY += cellH + gap
+      }
+
+      var compW = columns * cellW + gap * (columns - 1)
+      var compH = rows * cellH + gap * (rows - 1)
+      var aspectDiff = Math.abs(compW / compH - targetAspect)
+
+      var better = false
+      if (!best) better = true
+      else if (totalArea > best.totalArea + 1e-6) better = true
+      else if (Math.abs(totalArea - best.totalArea) <= 1e-6) {
+        if (aspectDiff < best.aspectDiff - 0.01) better = true
+        else if (Math.abs(aspectDiff - best.aspectDiff) <= 0.01 && rows < best.rows) better = true
+      }
+
+      if (better)
+        best = { rects: rects, totalArea: totalArea, aspectDiff: aspectDiff, rows: rows }
+    }
+  }
+
+  if (!best) {
+    // Degenerate area: aspect-fit each item in the whole viewport.
+    var fallback = []
+    for (var f = 0; f < count; f++) {
+      var fa = items[f].aspect
+      var fw = Math.min(viewW, viewH * fa)
+      var fh = fw / fa
+      fallback.push({
+        index: f,
+        x: originX + (viewW - fw) / 2,
+        y: originY + (viewH - fh) / 2,
+        width: fw,
+        height: fh
+      })
+    }
+    return fallback
+  }
+
+  // Centre the whole composition on the requested area, so a cap-shrunk window
+  // never leaves the group anchored to a corner.
+  var minX = Infinity
+  var minY = Infinity
+  var maxX = -Infinity
+  var maxY = -Infinity
+  for (var m = 0; m < best.rects.length; m++) {
+    var rect = best.rects[m]
+    if (rect.x < minX) minX = rect.x
+    if (rect.y < minY) minY = rect.y
+    if (rect.x + rect.width > maxX) maxX = rect.x + rect.width
+    if (rect.y + rect.height > maxY) maxY = rect.y + rect.height
+  }
+  var dx = (originX + viewW / 2) - (minX + maxX) / 2
+  var dy = (originY + viewH / 2) - (minY + maxY) / 2
+  for (var n = 0; n < best.rects.length; n++) {
+    var finalRect = best.rects[n]
+    finalRect.x = clamp(finalRect.x + dx, originX, originX + viewW - finalRect.width)
+    finalRect.y = clamp(finalRect.y + dy, originY, originY + viewH - finalRect.height)
+  }
+
+  return best.rects
 }
 
 // ── Cyclic 2D Workspace Navigation ──────────────────────────────────────────

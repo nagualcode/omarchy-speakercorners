@@ -11,10 +11,12 @@ import "WindowModel.js" as WindowModel
 //
 // It is deliberately NOT a WorkspaceCard: there is no card background, no outer
 // border, no workspace-number badge and no header. The windows of the workspace
-// are packed by `WindowGeometry.expoLayout` so that every one of them is fully
-// visible at once, none of them overlaps another, and each keeps its real aspect
-// ratio — the macOS Exposé arrangement, not a grid of identical slots and not a
-// picture of the desktop with its floating windows piled on top of each other.
+// are packed by `WindowGeometry.expoLayout` (capped-grid mode) so that every one
+// of them is fully visible at once, none overlaps another, and each keeps its
+// real aspect ratio. The arrangement uses as much of the screen as the cap
+// allows, keeps a 10px outer margin and 10px between previews, caps each single
+// window at a quarter of the usable area, and stays centred — not a picture of
+// the desktop with its floating windows piled on top of each other.
 //
 // The composition is solved once for the whole workspace and every preview then
 // takes the cell that belongs to its own index, so opening or closing a window
@@ -57,7 +59,12 @@ Item {
 
   // Breathing room between neighbouring previews. Exposé never lets two
   // thumbnails touch, otherwise the boundary between them is unreadable.
-  readonly property real previewSpacing: Math.max(1, Style.space(10) || 10)
+  readonly property real previewSpacing: 10
+  // Margin between the preview block and the screen edges.
+  readonly property real previewOuterMargin: 10
+  // A single preview never grows past a quarter of the usable area, so a lone
+  // window cannot swallow the screen.
+  readonly property real previewMaxAreaFraction: 0.25
 
   signal windowActivated(var toplevel)
 
@@ -136,7 +143,10 @@ Item {
       for (var i = 0; i < previews.length; i++)
         sizes.push(spatialPreview.naturalSizeOf(previews[i]))
       return WindowGeometry.expoLayout(sizes, 0, 0,
-        spatialPreview.width, spatialPreview.height, root.previewSpacing)
+        spatialPreview.width, spatialPreview.height, root.previewSpacing, {
+          outerMargin: root.previewOuterMargin,
+          maxAreaFraction: root.previewMaxAreaFraction
+        })
     }
 
     function rectFor(index) {
