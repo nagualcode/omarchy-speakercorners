@@ -127,6 +127,7 @@ Item {
   property bool wsShowAppMenu: true
   property bool wsShowOmafile: true
   property bool wsShowNewWs: true
+  property int appMenuRows: 1
   // Clicking a workspace card lands with no transition at all: the strip
   // suppresses Hyprland's animations just long enough for the switch to warp
   // into place. Every other workspace change (touchpad gesture, keybind, the
@@ -192,6 +193,7 @@ Item {
     root.wsShowAppMenu = setting("wsShowAppMenu", true) !== false
     root.wsShowOmafile = setting("wsShowOmafile", true) !== false
     root.wsShowNewWs = setting("wsShowNewWs", true) !== false
+    root.appMenuRows = Math.max(1, Math.min(6, Number(setting("appMenuRows", 1) || 1)))
     root.wsInstantSwitch = setting("wsInstantSwitch", true) !== false
     root.wsNeonEnabled = setting("wsNeonEnabled", false) !== false
     root.configLoaded = true
@@ -1231,6 +1233,7 @@ Item {
         cfg.plugins[i].wsShowNewWs = root.wsShowNewWs === true
         cfg.plugins[i].wsInstantSwitch = root.wsInstantSwitch === true
         cfg.plugins[i].wsNeonEnabled = root.wsNeonEnabled === true
+        cfg.plugins[i].appMenuRows = root.appMenuRows
         found = true
       }
     }
@@ -1248,7 +1251,8 @@ Item {
         wsShowOmafile: root.wsShowOmafile === true,
         wsShowNewWs: root.wsShowNewWs === true,
         wsInstantSwitch: root.wsInstantSwitch === true,
-        wsNeonEnabled: root.wsNeonEnabled === true
+        wsNeonEnabled: root.wsNeonEnabled === true,
+        appMenuRows: root.appMenuRows
       })
     }
     return cfg
@@ -1985,11 +1989,6 @@ Item {
     function close(): string { root.closeAppMenu(); return "ok" }
     function toggle(): string { root.toggleAppMenu(); return "ok" }
     function state(): string { return root.appMenuOpened ? "open" : "closed" }
-    function geom(): string {
-      return appMenu.panelW + "x" + appMenu.panelH + " @" + appMenu.panelX + "," + appMenu.panelY
-        + " cell=" + appMenu.cellSize + " vrows=" + appMenu.visibleRows + " items=" + appMenu.rows.length
-        + " sel=" + appMenu.selectedIndex + " lib=" + (root.appLibrary ? "1" : "0") + " aclib=" + (appMenu.appLibrary ? "1" : "0") + " shellHasLib=" + ((root.shell && root.shell.appLibrary) ? "1" : "0")
-    }
   }
 
   // Legacy target so existing commands and keybindings (`omarchy-shell mirador
@@ -2618,6 +2617,18 @@ Item {
             wsConfigPeel.restart()
           }
         }
+
+        MiniSlider {
+          width: parent.width
+          label: "App menu rows"
+          min: 1
+          max: 6
+          value: root.appMenuRows
+          stepSize: 1
+          format: function(v) { return Math.round(v) + (Math.round(v) === 1 ? " row" : " rows") }
+          onAdjust: function(v) { root.appMenuRows = Math.round(v); wsConfigPeel.restart() }
+          onCommitted: root.persistWorkspaceSettings()
+        }
       }
     }
 
@@ -2633,6 +2644,7 @@ Item {
       open: root.appMenuOpened
       surfaceOpacity: 1.0
       accentColor: root.wsStripAccent
+      rowsLimit: root.appMenuRows
       onDismissRequested: root.closeAppMenu()
     }
 
@@ -3236,6 +3248,7 @@ component GridCell: Item {
     property real max: 1
     property string label: ""
     property var format: null
+    property real stepSize: 0
     signal adjust(real v)
     signal committed()
 
@@ -3260,7 +3273,9 @@ component GridCell: Item {
     function pushX(x) {
       if (ms.max <= ms.min) return
       var t = Math.max(0, Math.min(1, (x - ms.trackX) / ms.trackW))
-      ms.value = ms.min + (ms.max - ms.min) * t
+      var v = ms.min + (ms.max - ms.min) * t
+      if (ms.stepSize > 0) v = Math.round(v / ms.stepSize) * ms.stepSize
+      ms.value = v
       ms.adjust(ms.value)
     }
 

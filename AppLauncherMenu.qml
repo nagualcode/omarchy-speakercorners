@@ -47,6 +47,7 @@ Item {
   //
   // The chain is deliberately one-directional (window -> budget -> rows -> panel)
   // so nothing here depends on panelH while panelH depends on it back.
+  property int rowsLimit: 1
   readonly property int columns: 6
   readonly property int cellGap: Style.space(6)
   readonly property int panelPad: Style.space(14)
@@ -64,14 +65,14 @@ Item {
   readonly property int cellSize: Math.max(Style.space(56), cellFit)
   readonly property int rowsBudgetH: Math.max(cellSize,
     Math.floor(menu.height * 0.72) - panelPad * 2 - headerH - footerH)
-  readonly property int visibleRows: Math.max(1,
-    Math.floor((rowsBudgetH + cellGap) / (cellSize + cellGap)))
+  readonly property int visibleRows: Math.max(1, Math.min(menu.rowsLimit, Math.floor((rowsBudgetH + cellGap) / (cellSize + cellGap))))
+
   readonly property int panelW: columns * cellSize + (columns - 1) * cellGap + panelPad * 2
   readonly property int panelH: Math.min(menu.height - Style.gapsOut * 2,
     visibleRows * cellSize + Math.max(0, visibleRows - 1) * cellGap + panelPad * 2 + headerH + footerH)
   readonly property int panelX: Math.max(0, Math.round((menu.width - panelW) / 2))
   // Lifted a little above centre: the workspace strip owns the bottom edge.
-  readonly property int panelY: Math.max(0, Math.round((menu.height - panelH) / 2 - Style.space(20)))
+  readonly property int panelY: Math.max(0, Math.round((menu.height - panelH) / 2 - Style.space(8)))
   readonly property int scrollH: Math.max(0, panelH - panelPad * 2 - headerH - footerH)
 
   readonly property bool hasRows: rows.length > 0

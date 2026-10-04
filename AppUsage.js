@@ -31,10 +31,21 @@ function boundedInt(value, fallback) {
   return n > 2147483647 ? 2147483647 : n
 }
 
+// Timestamps are milliseconds since the epoch (~1.79e12 today), well past the
+// 32-bit range, so they get their own clamp. Capping them like a count would
+// flatten every entry to 2147483647 and destroy the recency order.
+function boundedTime(value, fallback) {
+  var n = Number(value)
+  if (!isFinite(n)) return fallback
+  n = Math.round(n)
+  if (n < 0) return 0
+  return n > Number.MAX_SAFE_INTEGER ? Number.MAX_SAFE_INTEGER : n
+}
+
 function normalizeRecord(raw) {
   if (!isPlainObject(raw)) return null
   var count = boundedInt(raw.count, 0)
-  var last = boundedInt(raw.last, 0)
+  var last = boundedTime(raw.last, 0)
   // A record with neither a launch nor a timestamp carries no ordering
   // information at all; keeping it would only bloat the file.
   if (count === 0 && last === 0) return null
@@ -116,7 +127,7 @@ function record(store, id, nowMs) {
 
   var source = store && isPlainObject(store.entries) ? store.entries : ({})
   var previous = normalizeRecord(source[key]) || { count: 0, last: 0 }
-  var now = boundedInt(nowMs, 0)
+  var now = boundedTime(nowMs, 0)
 
   var entries = ({})
   for (var existing in source) {
