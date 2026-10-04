@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import Quickshell
 import Quickshell.Wayland
 import qs.Commons
@@ -52,6 +53,11 @@ Rectangle {
   // When false, the DragHandler is disabled (no drag cursor, no drag state).
   // Used by presentations without workspace drop targets.
   property bool allowDrag: true
+  // Clips the captured frame to the rounded corners of the preview. `clip`
+  // alone only crops to the bounding box, so without this the screenshot paints
+  // over the rounding the look-and-feel defines for windows. Used by the Exposé
+  // viewer, where the previews are large enough for square corners to show.
+  property bool roundedCapture: false
 
   signal activated()
   signal tabActivated(var targetToplevel)
@@ -131,6 +137,18 @@ Rectangle {
   Item {
     id: imageArea
     anchors.fill: parent
+    // Rasterise the capture and mask it to the same rounding as the surface so
+    // the screenshot cannot paint over the preview's corners.
+    layer.enabled: root.roundedCapture
+    layer.smooth: true
+    layer.effect: MultiEffect {
+      maskEnabled: true
+      maskSource: captureMask
+      // A layered `visible: false` mask exposes ~0.35 alpha, so the threshold
+      // must stay below that for the capture itself to stay fully opaque.
+      maskThresholdMin: 0.3
+      maskSpreadAtMin: 0.3
+    }
 
     ScreencopyView {
       id: preview
@@ -154,6 +172,22 @@ Rectangle {
       asynchronous: true
       smooth: true
       opacity: 0.72
+    }
+  }
+
+  // White rounded rectangle used as the alpha mask for `imageArea`. It is only
+  // rendered into a texture; it is never shown directly.
+  Item {
+    id: captureMask
+    anchors.fill: parent
+    visible: false
+    layer.enabled: true
+
+    Rectangle {
+      anchors.fill: parent
+      antialiasing: true
+      radius: root.radius
+      color: "white"
     }
   }
 

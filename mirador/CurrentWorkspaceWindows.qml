@@ -225,6 +225,9 @@ Item {
         // capture stream is never deferred behind a first-paint timer.
         showIconFallback: false
         allowDrag: false
+        // Round the captured frame to the window corner radius from the
+        // look-and-feel, matching how the compositor draws the real windows.
+        roundedCapture: true
         liveCaptureEnabled: root.livePreviews && root.visible
         onActivated: root.windowActivated(previewToplevel)
         onTabActivated: function(targetToplevel) { root.windowActivated(targetToplevel) }
