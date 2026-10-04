@@ -1459,6 +1459,15 @@ Item {
     return root.workspaceById(root.singleWorkspaceId())
   }
 
+  // Whether the focused workspace should offer the Exposé viewer at all. See
+  // WindowModel.expoEligible: a single window, or a workspace whose windows are
+  // all tiled, must leave the bottom-right corner inert.
+  function exposeEligible() {
+    var workspace = root.singleWorkspaceObject()
+    var toplevels = workspace ? workspace.toplevels.values : []
+    return WindowModel.expoEligible(toplevels)
+  }
+
   // Workspace activation: switches Hyprland active workspace.
   // When clicking inside an empty workspace or scratchpad, transports/toggles that workspace and closes Mirador.
   // When clicking a non-empty workspace, switches active workspace and keeps Mirador open.

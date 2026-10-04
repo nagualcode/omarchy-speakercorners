@@ -401,15 +401,24 @@ Item {
       root.openMiradorSingle()
       return
     }
+    // Once the viewer is open the corner always closes it; eligibility only
+    // governs opening. The guard lives in openMiradorSingle().
     if (mirador.activePresentation === "single") {
       mirador.dismiss()
       return
     }
+    if (!mirador.exposeEligible()) return
     mirador.setPresentation("single")
   }
 
   function openMiradorSingle() {
-    if (miradorLoader.item) miradorLoader.item.open('{"presentation":"single"}')
+    var mirador = miradorLoader.item
+    if (!mirador) return
+    // Exposé is only useful when the workspace has more than one window and at
+    // least one of them floats. A lone window, or an all-tiled workspace, is
+    // already legible, so the bottom-right corner must do nothing.
+    if (!mirador.exposeEligible()) return
+    mirador.open('{"presentation":"single"}')
   }
 
   // ---- bottom-left hot corner: hide the strip and the menu bar together ----

@@ -15,6 +15,27 @@ function toplevelAddress(toplevel) {
   return normalizedAddress((toplevel && toplevel.address) || (ipc && ipc.address))
 }
 
+// Whether the focused workspace should offer the Exposé viewer. The viewer is
+// a spatial rearrangement of the workspace; it only earns its place when there
+// is something the live screen cannot already show: more than one window, and
+// at least one of them floating. A lone window, or a workspace whose windows
+// are all tiled, is already fully legible in place, so the corner stays inert.
+function expoEligible(toplevels) {
+  var values = toplevels || []
+  var count = 0
+  var hasFloating = false
+
+  for (var i = 0; i < values.length; i++) {
+    var client = values[i]
+    if (!client) continue
+    count++
+    var ipc = ipcObject(client)
+    if (ipc && ipc.floating === true) hasFloating = true
+  }
+
+  return count > 1 && hasFloating
+}
+
 function groupAddresses(toplevel) {
   var ipc = ipcObject(toplevel)
   // QVariantList values from Qt are array-like but are not guaranteed to pass

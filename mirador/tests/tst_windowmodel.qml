@@ -420,4 +420,44 @@ TestCase {
     compare(WindowModel.findWorkspaceCardIndex(model, NaN), -1)
     compare(WindowModel.findWorkspaceCardIndex(model, "invalid"), -1)
   }
+
+  function test_expoEligibleNeedsMoreThanOneWindow() {
+    // A single window, floating or not, must leave the corner inert.
+    verify(!WindowModel.expoEligible([client("0x1", [], true, 0, { floating: true })]))
+    verify(!WindowModel.expoEligible([client("0x1", [], true, 0)]))
+  }
+
+  function test_expoEligibleRejectsAllTiledWorkspace() {
+    var values = [client("0x1", [], true, 0), client("0x2", [], true, 1)]
+    verify(!WindowModel.expoEligible(values))
+  }
+
+  function test_expoEligibleAcceptsMixedWorkspace() {
+    var values = [
+      client("0x1", [], true, 0),
+      client("0x2", [], true, 1, { floating: true })
+    ]
+    verify(WindowModel.expoEligible(values))
+  }
+
+  function test_expoEligibleAcceptsAllFloatingWorkspace() {
+    var values = [
+      client("0x1", [], true, 0, { floating: true }),
+      client("0x2", [], true, 1, { floating: true })
+    ]
+    verify(WindowModel.expoEligible(values))
+  }
+
+  function test_expoEligibleIgnoresGroupedTiledMembers() {
+    // A tabbed group is still a tiled window: two members, no float.
+    var group = ["0x1", "0x2"]
+    var values = [client("0x1", group, true, 0), client("0x2", group, false, 1)]
+    verify(!WindowModel.expoEligible(values))
+  }
+
+  function test_expoEligibleHandlesEmptyAndNull() {
+    verify(!WindowModel.expoEligible([]))
+    verify(!WindowModel.expoEligible(null))
+    verify(!WindowModel.expoEligible([null, client("0x1", [], true, 0)]))
+  }
 }
