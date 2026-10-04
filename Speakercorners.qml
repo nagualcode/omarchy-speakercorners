@@ -1660,6 +1660,12 @@ Item {
 
   function showWorkspaces() {
     if (root.screensaverUp) return
+    // A fullscreen window owns the screen; keep the strip (Overlay layer, which
+    // Hyprland won't fade) out of the way until it exits.
+    if (root.fullscreenActive) {
+      if (root.workspacesOpened) root.hideWorkspaces()
+      return
+    }
     var rebuilt = root.modelDirty
     root.ready = true
     if (rebuilt) root.refreshMainModel()
@@ -1901,6 +1907,20 @@ Item {
   readonly property var focusedWorkspaceId: {
     var ws = Hyprland.focusedWorkspace
     return ws ? ws.id : null
+  }
+
+  // Hyprland fades the bar's Top layer out while a window is fullscreen, but
+  // leaves Overlay layers (where this strip lives) visible, so the strip has to
+  // step aside itself. `focusedMonitor.activeWorkspace.hasFullscreen` is the
+  // per-monitor signal, matching the screen the strip is shown on.
+  readonly property bool fullscreenActive: {
+    var monitor = Hyprland.focusedMonitor
+    var ws = monitor ? monitor.activeWorkspace : null
+    return !!(ws && ws.hasFullscreen)
+  }
+  onFullscreenActiveChanged: {
+    if (root.fullscreenActive) root.hideWorkspaces()
+    else if (root.wsAlwaysVisible && root.configLoaded) root.showWorkspaces()
   }
 
   // ---- Smart app menu -----------------------------------------------------
@@ -2645,6 +2665,7 @@ Item {
       surfaceOpacity: 1.0
       accentColor: root.wsStripAccent
       rowsLimit: root.appMenuRows
+      stripTop: root.stripY
       onDismissRequested: root.closeAppMenu()
     }
 

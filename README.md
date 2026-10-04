@@ -48,6 +48,9 @@ bloat — one surface, `~1.5 KB` of attitude per corner.
   place, so no slide plays. Every other workspace change — the touchpad
   gesture, keybinds, the `+` button — keeps the animated macOS-style
   transition configured in `~/.config/hypr/looknfeel.lua`.
+  While a window on the focused monitor is fullscreen the strip steps aside
+  (Hyprland fades the bar's Top layer but not the Overlay layer the strip lives
+  on, so it hides itself); a pinned strip comes back when fullscreen exits.
   Workspace cards always render the actual, full-color app icons; the tile
   background/border is dropped for a bare, Dock-like look
   (`wsStripRealIcons` is always on — there is no generic glyph fallback).
@@ -63,9 +66,10 @@ bloat — one surface, `~1.5 KB` of attitude per corner.
   a clipboard glyph because the installed Nerd Font does not carry it).
 - **🧲 Smart app grid** — left-clicking the apps button no longer borrows the
   Omarchy menu; it opens a launcher of its own, built from the exact same app
-  library so it lists every app the menu lists. Six square cells per row, big
-  icons with the name underneath, centered just above the strip. It shows a
-  single row by default; raise `appMenuRows` (1–6) for a taller grid.
+  library so it lists every app the menu lists. Six square cells per row with
+  big icons and the name underneath; the grid's bottom is parked just above the
+  strip. It shows a single row by default; raise `appMenuRows` (1–6) for a
+  taller grid, which grows upward so it never covers the strip.
   **The apps you actually use float to the front**: the most recently opened
   app comes first, ties break by how often you have opened it, and apps you have
   never opened follow alphabetically. Typing filters the grid with the same fuzzy

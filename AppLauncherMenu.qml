@@ -48,6 +48,10 @@ Item {
   // The chain is deliberately one-directional (window -> budget -> rows -> panel)
   // so nothing here depends on panelH while panelH depends on it back.
   property int rowsLimit: 1
+  // Top edge of the workspace strip, in window coordinates. The menu parks its
+  // bottom a fixed gap above this, so extra rows grow upward toward the screen
+  // top instead of pushing the grid down over the strip.
+  property int stripTop: 0
   readonly property int columns: 6
   readonly property int cellGap: Style.space(6)
   readonly property int panelPad: Style.space(14)
@@ -71,8 +75,10 @@ Item {
   readonly property int panelH: Math.min(menu.height - Style.gapsOut * 2,
     visibleRows * cellSize + Math.max(0, visibleRows - 1) * cellGap + panelPad * 2 + headerH + footerH)
   readonly property int panelX: Math.max(0, Math.round((menu.width - panelW) / 2))
-  // Lifted a little above centre: the workspace strip owns the bottom edge.
-  readonly property int panelY: Math.max(0, Math.round((menu.height - panelH) / 2 - Style.space(8)))
+  // Sits just above the workspace strip (about a 20px gap). Because the bottom
+  // edge is pinned to stripTop, a taller grid grows upward.
+  readonly property int panelY: Math.max(Style.space(8),
+    Math.round(menu.stripTop - Style.space(20) - panelH))
   readonly property int scrollH: Math.max(0, panelH - panelPad * 2 - headerH - footerH)
 
   readonly property bool hasRows: rows.length > 0
