@@ -64,7 +64,8 @@ bloat — one surface, `~1.5 KB` of attitude per corner.
 - **🧲 Smart app grid** — left-clicking the apps button no longer borrows the
   Omarchy menu; it opens a launcher of its own, built from the exact same app
   library so it lists every app the menu lists. Six square cells per row, big
-  icons with the name underneath, centered just above the strip.
+  icons with the name underneath, centered just above the strip. It shows a
+  single row by default; raise `appMenuRows` (1–6) for a taller grid.
   **The apps you actually use float to the front**: the most recently opened
   app comes first, ties break by how often you have opened it, and apps you have
   never opened follow alphabetically. Typing filters the grid with the same fuzzy
@@ -129,6 +130,7 @@ Settings live in the `speakercorners` entry of
   "bottomCenterCommand": "omarchy-shell workspace-overview toggle",
   "wsScale": 0.5,           // workspace strip scale (height multiplier)
   "wsStripGap": 21,         // gap between the strip and the screen bottom
+  "appMenuRows": 1,         // rows of icons in the smart app grid (1–6)
   "wsStripRealIcons": true, // always real, full-color app icons in the cards
   "wsInstantSwitch": true,  // card clicks switch workspace with no animation
   "floatGridOrder": [
