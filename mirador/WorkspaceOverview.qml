@@ -19,6 +19,30 @@ Item {
   property bool livePreviewsReady: false
   property bool demoMode: false
   property var targetScreen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+
+  // Clean desktop backdrop for the expose overlay: the user's wallpaper, drawn
+  // opaquely so the real windows of the workspace never bleed through behind the
+  // arrangement. `backgroundLink` is Omarchy's stable `current/background`
+  // symlink; it is resolved to a real path so Qt reloads it after a theme swap.
+  readonly property string backgroundLink: Quickshell.env("HOME") + "/.local/state/omarchy/current/background"
+  property string backgroundPath: ""
+  readonly property string backgroundSource: root.backgroundPath !== "" ? Util.fileUrl(root.backgroundPath) : ""
+
+  function refreshBackground() {
+    if (!backgroundProbe.running) backgroundProbe.running = true
+  }
+
+  Process {
+    id: backgroundProbe
+    command: ["readlink", "-f", root.backgroundLink]
+    stdout: SplitParser {
+      onRead: function(line) {
+        var path = String(line).trim()
+        if (path !== "" && path !== root.backgroundPath) root.backgroundPath = path
+      }
+    }
+  }
+
   property var draggedToplevel: null
   property int selectedCardIndex: -1
   property string selectedWindowAddress: ""
@@ -1301,6 +1325,7 @@ Item {
     // complete before Qt renders the first frame.
     root.livePreviewsReady = false
     root.opened = true
+    root.refreshBackground()
 
     if (root.keybindMode === "cycle" && payload && typeof payload.step === "number") {
       root.cycleStep(payload.step < 0 ? -1 : 1)
@@ -1736,14 +1761,28 @@ Item {
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
     exclusionMode: ExclusionMode.Ignore
 
-    // Slight full-screen dim behind the workspace cards, using the same scrim
-    // the Omarchy menu applies when it opens.
+    // Opaque clean-desktop backdrop. A solid fill guarantees the real windows
+    // can never bleed through even if the wallpaper has transparent pixels; the
+    // wallpaper is painted on top and a light dim keeps the previews readable.
     Rectangle {
       anchors.fill: parent
-      color: Color.menu.scrim
-      Behavior on color {
-        ColorAnimation { duration: 100 }
-      }
+      color: Color.background
+    }
+
+    Image {
+      anchors.fill: parent
+      source: root.backgroundSource
+      fillMode: Image.PreserveAspectCrop
+      cache: true
+      asynchronous: true
+      smooth: true
+      sourceSize.width: width * Screen.devicePixelRatio
+      sourceSize.height: height * Screen.devicePixelRatio
+    }
+
+    Rectangle {
+      anchors.fill: parent
+      color: Util.alpha(Color.background, 0.25)
     }
 
     MouseArea {
