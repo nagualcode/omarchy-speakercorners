@@ -55,7 +55,7 @@ Item {
   readonly property int columns: 6
   readonly property int cellGap: Style.space(6)
   readonly property int panelPad: Style.space(14)
-  readonly property int headerH: Style.space(34)
+  readonly property int headerH: Style.space(12)
   readonly property int footerH: Style.space(20)
   readonly property int cellFit: {
     var budgetW = menu.width - Style.gapsOut * 2
@@ -444,27 +444,15 @@ Item {
       width: panel.width - panel.contentLeftInset - panel.contentRightInset
       height: menu.headerH - Style.spacing.hairline
 
-      Text {
-        id: searchGlyph
-        anchors.left: parent.left
-        anchors.leftMargin: Style.space(2)
-        anchors.verticalCenter: parent.verticalCenter
-        // fa-magnifying-glass (U+F002) from Font Awesome 7 Free, the family
-        // the strip already uses for its launcher glyphs.
-        text: "\uf002"
-        color: Util.alpha(Color.menu.text, menu.query.length > 0 ? 0.75 : 0.45)
-        font.family: "Font Awesome 7 Free"
-        font.pixelSize: Style.font.bodySmall
-        font.weight: Font.Bold
-      }
-
+      // The search field is invisible: keystrokes are still captured here to
+      // filter the grid, but the only visible echo of what was typed is the
+      // small quoted query rendered in the footer below the grid.
       TextInput {
         id: searchInput
-        anchors.left: searchGlyph.right
-        anchors.leftMargin: Style.space(8)
-        anchors.right: countLabel.left
-        anchors.rightMargin: Style.space(8)
-        anchors.verticalCenter: parent.verticalCenter
+        anchors.fill: parent
+        anchors.leftMargin: Style.space(2)
+        anchors.rightMargin: Style.space(2)
+        opacity: 0
         focus: menu.open
         selectByMouse: true
         clip: true
@@ -481,26 +469,6 @@ Item {
 
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function(event) { event.accepted = menu.handleKey(event) }
-      }
-
-      Text {
-        id: countLabel
-        anchors.right: parent.right
-        anchors.rightMargin: Style.space(2)
-        anchors.verticalCenter: parent.verticalCenter
-        text: menu.hasRows
-          ? (menu.rows.length + (menu.rows.length === 1 ? " app" : " apps"))
-          : "no apps"
-        color: Util.alpha(Color.menu.text, 0.45)
-        font.family: Style.font.family
-        font.pixelSize: Style.font.caption
-      }
-
-      Rectangle {
-        anchors.bottom: parent.bottom
-        width: parent.width
-        height: Style.spacing.hairline
-        color: Util.alpha(Color.menu.border, 0.28)
       }
     }
 
@@ -607,50 +575,22 @@ Item {
     }
 
     // ---- Footer ----
+    // The quiet echo of what is being typed: bottom-centre, small, italic and
+    // quoted. Hidden while the query is empty, so no legend ever sits on screen.
     Text {
       x: panel.contentLeftInset
       y: panel.height - panel.contentBottomInset - menu.footerH
       width: panel.width - panel.contentLeftInset - panel.contentRightInset
       height: menu.footerH
       verticalAlignment: Text.AlignVCenter
-      // With a query the grid is ordered by the search, without it by use; the
-      // hint says which one is on screen.
-      text: menu.query.trim().length > 0
-        ? "↑ ↓ ← → move   ·   Enter open   ·   Esc clear"
-        : "most recent first   ·   ↑ ↓ ← → move   ·   Enter open   ·   Esc close"
-      color: Util.alpha(Color.menu.text, 0.38)
+      horizontalAlignment: Text.AlignHCenter
+      visible: menu.query.trim().length > 0
+      text: "\"" + menu.query + "\""
+      color: Util.alpha(Color.menu.text, 0.55)
       font.family: Style.font.family
       font.pixelSize: Style.font.caption
+      font.italic: true
       elide: Text.ElideRight
-    }
-
-    // ---- Empty state ----
-    Column {
-      anchors.centerIn: parent
-      width: parent.width - menu.panelPad * 2
-      spacing: Style.space(6)
-      visible: !menu.hasRows
-
-      Text {
-        width: parent.width
-        horizontalAlignment: Text.AlignHCenter
-        text: menu.query.trim().length > 0 ? "No apps match" : "No apps found"
-        color: Util.alpha(Color.menu.text, 0.55)
-        font.family: Style.font.family
-        font.pixelSize: Style.font.subtitle
-      }
-
-      Text {
-        width: parent.width
-        horizontalAlignment: Text.AlignHCenter
-        text: menu.query.trim().length > 0
-          ? "\"" + menu.query + "\""
-          : "check omarchy-menu apps for hidden entries"
-        color: Util.alpha(Color.menu.text, 0.35)
-        font.family: Style.font.family
-        font.pixelSize: Style.font.caption
-        elide: Text.ElideRight
-      }
     }
   }
 }
