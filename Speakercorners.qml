@@ -35,7 +35,7 @@ import "IconModel.js" as IconModel
 //   "plugins": [
 //     { "id": "speakercorners",
 //       "dwellMs": 139, "targetSize": 8,
-//       "topLeftAction": "none",
+//       "topLeftAction": "cascade-floats",
 //       "topRightAction": "toggle-window-modes",
 //       "bottomLeftAction": "toggle-hide-chrome",  "bottomLeftCommand": "",
 //       "bottomRightAction": "mirador",
@@ -319,6 +319,9 @@ Item {
     case "toggle-window-modes":
       root.toggleAllWindowModes()
       break
+    case "cascade-floats":
+      root.cascadeWorkspaceFloats()
+      break
     case "mirador":
       root.triggerMirador(edge)
       break
@@ -531,6 +534,101 @@ Item {
         var fsExpr = 'hl.dsp.window.fullscreen_state({ internal = 0, client = 0, window = "address:' + w.address + '" })'
         Quickshell.execDetached(["hyprctl", "dispatch", fsExpr])
       }
+    }
+  }
+
+  // ---- Cascade the workspace into floating 700x500 windows ----------------
+  // Every mapped window on the active workspace becomes floating, is resized
+  // to the default float size and laid out as a heuristic cascade: each window
+  // slides a step right-and-down from the previous one, and once the diagonal
+  // runs off an edge the offset wraps with the two steps taken modulo the free
+  // space. The x and y steps share no common multiple with their respective
+  // free extents, so no two windows ever land on the exact same corner — a
+  // covered window always peeks out by at least one strip. (Until the lattice
+  // repeats, which takes on the order of ~16k windows.)
+  property int cascadeWsId: -1
+  property string cascadeMonitorsJson: ""
+  function cascadeWorkspaceFloats() {
+    root.cascadeWsId = Number(root.focusedWorkspaceId)
+    if (!isFinite(root.cascadeWsId)) return
+    cascadeMonitorsProc.running = true
+  }
+  Process {
+    id: cascadeMonitorsProc
+    command: ["hyprctl", "-j", "monitors"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.cascadeMonitorsJson = String(text || "")
+        cascadeClientsProc.running = true
+      }
+    }
+  }
+  Process {
+    id: cascadeClientsProc
+    command: ["hyprctl", "-j", "clients"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.applyWorkspaceCascade(text)
+    }
+  }
+  function applyWorkspaceCascade(clientsText) {
+    var wsId = Number(root.cascadeWsId)
+    root.cascadeWsId = -1
+    if (!isFinite(wsId)) return
+    var clients = []
+    try { clients = JSON.parse(String(clientsText || "[]")) } catch (e) { return }
+    if (!Array.isArray(clients)) return
+    var wins = []
+    for (var i = 0; i < clients.length; i++) {
+      var c = clients[i]
+      if (!c || c.mapped === false || c.hidden === true) continue
+      if (!c.workspace || Number(c.workspace.id) !== wsId) continue
+      var addr = String(c.address || "")
+      if (!/^0x[0-9a-fA-F]+$/.test(addr)) continue
+      wins.push({ address: addr, floating: c.floating === true, fullscreen: Number(c.fullscreen) || 0 })
+    }
+    if (wins.length === 0) return
+    var monitors = []
+    try { monitors = JSON.parse(String(root.cascadeMonitorsJson || "[]")) } catch (e) { root.cascadeMonitorsJson = ""; return }
+    root.cascadeMonitorsJson = ""
+    if (!Array.isArray(monitors) || monitors.length === 0) return
+    var m = null
+    for (var j = 0; j < monitors.length; j++) if (monitors[j] && monitors[j].focused === true) { m = monitors[j]; break }
+    if (!m) m = monitors[0]
+    var scale = m.scale || 1
+    var lw = Math.round(m.width / scale)
+    var lh = Math.round(m.height / scale)
+    var res = (Array.isArray(m.reserved) && m.reserved.length === 4) ? m.reserved : [0, 0, 0, 0]
+    var resL = Number(res[0]) || 0
+    var resR = Number(res[2]) || 0
+    var resB = Number(res[3]) || 0
+    // Same box a tiled maximized window occupies: reserved strips excluded,
+    // fixed 10px top inset and 1px border on top of it.
+    var workTop = 10
+    var workX = resL + 1
+    var workY = workTop + 1
+    var workW = lw - resL - resR - 2
+    var workH = lh - resB - workTop - 2
+    var WIN_W = 700, WIN_H = 500
+    var cx = Math.max(0, workW - WIN_W)
+    var cy = Math.max(0, workH - WIN_H)
+    var n = wins.length
+    // Steps adapt to how crowded the workspace is: few windows -> generous
+    // slivers, many windows -> tighter diagonal.
+    var dx = Math.max(40, Math.min(110, Math.round(cx / Math.min(n, 8))))
+    var dy = Math.max(30, Math.min(80, Math.round(cy / Math.min(n, 4))))
+    for (var k = 0; k < wins.length; k++) {
+      var w = wins[k]
+      var base = ' window = "address:' + w.address + '"'
+      if (w.fullscreen !== 0)
+        Quickshell.execDetached(["hyprctl", "dispatch", 'hl.dsp.window.fullscreen_state({ internal = 0, client = 0,' + base + ' })'])
+      if (!w.floating)
+        Quickshell.execDetached(["hyprctl", "dispatch", 'hl.dsp.window.float({ action = "toggle",' + base + ' })'])
+      var px = workX + ((k * dx) % (cx + 1))
+      var py = workY + ((k * dy) % (cy + 1))
+      Quickshell.execDetached(["hyprctl", "dispatch", 'hl.dsp.window.resize({ x = ' + WIN_W + ', y = ' + WIN_H + ',' + base + ' })'])
+      Quickshell.execDetached(["hyprctl", "dispatch", 'hl.dsp.window.move({ x = ' + px + ', y = ' + py + ',' + base + ' })'])
     }
   }
 
