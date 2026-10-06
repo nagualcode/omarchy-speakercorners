@@ -110,19 +110,22 @@ omarchy plugin remove nagualcode.speakercorners
 
 ## ⚙️ Configuration
 
-Settings live in the `speakercorners` entry of
-`~/.config/omarchy/shell.json`, for example:
+Settings live in a `plugins` entry in `~/.config/omarchy/shell.json`
+(`"id": "speakercorners"` — the plugin only reads the entry whose id matches
+that exact string). Every key is optional and falls back to a default, so the
+minimum entry is just `{ "id": "speakercorners" }`. The full form, for
+example:
 
 ```jsonc
 {
-  "id": "nagualcode.speakercorners",
+  "id": "speakercorners",
   "enabled": true,
   "dwellMs": 139,          // how long the pointer must rest to fire (120–3000)
   "targetSize": 8,         // hot-corner hitbox, in px
   "animations": true,      // false to disable the icon-panel / workspace-strip slide
   "clockFormat": "dddd HH:mm",
   "cardWidth": "auto",     // or a fixed px width
-  "topLeftAction": "none",
+  "topLeftAction": "cascade-floats",
   "topLeftCommand": "",
   "topRightAction": "toggle-window-modes",
   "topRightCommand": "",
@@ -180,7 +183,7 @@ Edit `actionEntries` to change them.
 
 | Key                 | values                                              |
 | ------------------- | --------------------------------------------------- |
-| `topLeftAction`     | `command` / `toggle-window-modes` / `none` — disabled by default |
+| `topLeftAction`     | `command` / `cascade-floats` / `toggle-window-modes` / `none` — cascade-floats by default |
 | `topRightAction`    | `command` / `toggle-window-modes` / `none` — window-mode toggle by default |
 | `bottomLeftAction`  | `command` / `toggle-hide-chrome` / `none` — hide-chrome toggle by default |
 | `bottomRightAction` | `command` / `mirador` / `none` — workspace overview by default |
@@ -193,6 +196,15 @@ windows are converted; a tie resolves to tiled). When going tiled it also
 understands that a fullscreen/maximized window would keep swallowing the split:
 with more than one window on the workspace it pulls such a window back out of
 fullscreen so the screen genuinely divides between the apps.
+`cascade-floats` pulls every mapped window on the active workspace out of
+tiling (and out of fullscreen/maximize) and lays them out as a **heuristic
+cascade**: each one floats at 700×500 and slides one step right-and-down from
+the window before it. The two steps adapt to how crowded the workspace is
+(40–110px horizontal, 30–80px vertical) and wrap modulo the free space, so once
+the diagonal runs off an edge it continues from a shifted row; because the
+steps are always coprime with the free extents, no two windows ever land on the
+exact same corner, so a covered window always keeps a visible sliver under the
+one on top. The layout is idempotent: re-dwelling the corner just re-runs it.
 `toggle-hide-chrome` hides the
 workspace strip, bar and panel layer (bottom-left corner); both can also be
 triggered over IPC with `omarchy-shell speakercorners triggeraction <name>`.
