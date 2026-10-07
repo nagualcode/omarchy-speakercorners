@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "nagualcode.speakercorners",
   "name": "Speaker Corners",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "author": "nagual",
   "license": "MIT",
-  "description": "Floating workspace switcher (bottom-center), icon panel with embedded widgets (bottom-left), a smart MRU-ranked app grid and hot-corner actions (including the Omarchy menu) in one masked, click-through surface.",
+  "description": "Hot-corner actions (including the Omarchy menu), the icon panel with embedded widgets (bottom-left) and the embedded mirador overlay, in one masked, click-through surface. The floating workspace strip lives in nagualcode.nagualstrip.",
   "kinds": [
     "panel"
   ],

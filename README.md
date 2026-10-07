@@ -3,10 +3,15 @@
 > Three corners. One lightweight, fully click-through Omarchy plugin.
 > Hot corners that **speak** — and a floating command center that listens.
 
-**Speaker Corners** mashes an icon panel (bottom-left), a floating workspace switcher
-(bottom-center), a smart app grid and hot-corner actions (Omarchy menu, app
-dropdowns) into a single masked, click-through overlay. No window stack, no
+**Speaker Corners** mashes an icon panel (bottom-left), a floating workspace
+overview and hot-corner actions (Omarchy menu, app dropdowns, window layout
+commands) into a single masked, click-through overlay. No window stack, no
 bloat — one surface, `~1.5 KB` of attitude per corner.
+
+> 📦 **The workspace strip, its settings popup and the smart app grid moved out
+> into their own plugin — [nagualstrip](https://github.com/nagualcode/omarchy-nagualstrip).**
+> Install both to keep the pre-split behaviour (see
+> [Migration](#-migration-from-v1-when-the-strip-lived-here)).
 
 ![izi](https://img.shields.io/badge/omarchy-ready-blueviolet)
 ![hyprland](https://img.shields.io/badge/hyprland-native-2ea44f)
@@ -17,8 +22,10 @@ bloat — one surface, `~1.5 KB` of attitude per corner.
 ## 🎯 What it does
 
 - **🖱️ Five hot corners** — park the cursor, let a tiny dwell timer fire: summon
-  the workspace overview, toggle window modes, toggle the icon panel, toggle the
-  workspace floating strip, or run your own command. Everything else stays
+  the workspace overview, toggle window modes, toggle the icon panel, or run
+  your own command (the bottom-center corner ships
+  `omarchy-shell workspace-overview toggle`, which is how the separate
+  `nagualstrip` plugin is summoned from the corners). Everything else stays
   fully click-through.
 - **🗺️ Workspace overview (bottom-right)** — a port of the Mirador workspace
   overview (`mirador/`), summoned straight from a hot corner. It keeps its own
@@ -35,51 +42,14 @@ bloat — one surface, `~1.5 KB` of attitude per corner.
   The full multi-workspace overview is still one `Super` press (or a 3-finger
   swipe up) away, and `omarchy-shell mirador toggle` opens it directly.
   It is addressed by the `mirador` corner action or `omarchy-shell mirador toggle`.
-- **🌆 Floating workspace strip (bottom-center)** — one quarter of the bottom
-  edge's width, centered; hover and wander between workspaces. Each card is a
-  live preview whose app icons fill the cell (a single app gets the whole tile,
-  macOS-Dock style), plus an urgent dot in the corner, and a `+` to mint a new
-  workspace. A small triangle at the strip's base points up at the active
-  workspace. Its distance to the screen bottom is set by `wsStripGap` (a `Gap`
-  slider in the settings popup).
-  Clicking a card switches workspaces **instantly** (`wsInstantSwitch`, on by
-  default, toggled in the same popup): the strip suppresses Hyprland's
-  animations just long enough for the compositor to warp the switch into
-  place, so no slide plays. Every other workspace change — the touchpad
-  gesture, keybinds, the `+` button — keeps the animated macOS-style
-  transition configured in `~/.config/hypr/looknfeel.lua`.
-  While a window on the focused monitor is fullscreen the strip steps aside
-  (Hyprland fades the bar's Top layer but not the Overlay layer the strip lives
-  on, so it hides itself); a pinned strip comes back when fullscreen exits.
-  Workspace cards always render the actual, full-color app icons; the tile
-  background/border is dropped for a bare, Dock-like look
-  (`wsStripRealIcons` is always on — there is no generic glyph fallback).
-  The small triangle pointing at the active workspace doubles as its close
-  button: hovering turns it into an **×** and clicking closes the workspace
-  (every window on it). While it points at the empty/new workspace (`+`) there
-  is nothing to close, so it stays a plain triangle.
-  The **apps button** at the right of the strip opens a **smart app grid** with
-  a left-click and a terminal with a right-click. Its glyph is the solid 2×2
-  grid `fa-th` (U+F00A) drawn from **Font Awesome 7 Free Solid** in the theme
-  accent color — no card background, so it stays a bare, fully-opaque icon that
-  tracks the current theme (a previous `nf-md-apps`/U+F0192 attempt fell back to
-  a clipboard glyph because the installed Nerd Font does not carry it).
-- **🧲 Smart app grid** — left-clicking the apps button no longer borrows the
-  Omarchy menu; it opens a launcher of its own, built from the exact same app
-  library so it lists every app the menu lists. Six square cells per row with
-  big icons and the name underneath; the grid's bottom is parked just above the
-  strip. It shows a single row by default; raise `appMenuRows` (1–6) for a
-  taller grid, which grows upward so it never covers the strip.
-  **The apps you actually use float to the front**: the most recently opened
-  app comes first, ties break by how often you have opened it, and apps you have
-  never opened follow alphabetically. Typing filters the grid with the same fuzzy
-  search the Omarchy menu uses (ranking is left alone while you type, so the
-  matches read like the menu's). Arrows move (and wrap), `Enter` launches,
-  `Esc` clears the search and then closes, `PageUp`/`PageDown`/`Home`/`End`
-  scroll, the wheel scrolls, and clicking outside dismisses it.
-  The ranking is remembered across reboots in
-  `${XDG_STATE_HOME:-~/.local/state}/speakercorners/app-usage.json` (max 400
-  apps). Bind it to a key with `omarchy-shell speakercorners-apps toggle`.
+- **🌆 Workspace strip + app grid → nagualstrip** — the floating workspace
+  strip (bottom-center), its right-click settings popup and the smart
+  MRU-ranked app grid moved out to their own plugin:
+  [`nagualstrip`](https://github.com/nagualcode/omarchy-nagualstrip), on their
+  own Overlay window. Speaker Corners still drives them over IPC — the
+  bottom-left `toggle-hide-chrome` corner fades the strip together with the bar,
+  opening the icon panel suspends it, and closing the panel restores exactly
+  what was on screen — but this plugin no longer draws any of it.
 - **🧊 Icon panel (bottom-left)** — a compact card nerd-friendly enough to live on:
   - **🕐 A clock** that opens the real menu-bar calendar when clicked.
   - **🔋 Smart icons** — battery (with plug/AC state), Wi-Fi (signal strength),
@@ -98,15 +68,46 @@ bloat — one surface, `~1.5 KB` of attitude per corner.
 
 ## 📦 Installation
 
-omarchy plugin add https://github.com/nagualcode/omarchy-speakercorners.git --enable
-
-
 ```sh
+omarchy plugin add https://github.com/nagualcode/omarchy-speakercorners.git --enable
 omarchy restart shell
 ```
 
-## Removal
+### Removal
+
+```sh
 omarchy plugin remove nagualcode.speakercorners
+```
+
+## 📦 Migration from v1 (when the strip lived here)
+
+Speaker Corners **2.0** is hot corners + icon panel + workspace overview only.
+The workspace strip, its settings popup, the smart app grid and the `ws*`
+config keys moved out to their own plugin,
+[nagualstrip](https://github.com/nagualcode/omarchy-nagualstrip).
+
+| Before (v1)                                                       | Now                                                                    |
+| ----------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `ws*`, `appMenuRows` keys in the `speakercorners` entry           | same keys in a `nagualcode.nagualstrip` entry                          |
+| `.../.local/state/speakercorners/app-usage.json` (app ranking)    | `.../.local/state/nagualstrip/app-usage.json`                          |
+| `~/.config/omarchy/.speakercorners-reserve`                       | `~/.config/omarchy/.nagualstrip-reserve` — `monitors.lua` must read it |
+| `omarchy-shell speakercorners-apps toggle`                        | still works — legacy target kept by `nagualstrip`                      |
+| `omarchy-shell workspace-overview toggle`                         | still works — legacy target kept by `nagualstrip`                      |
+
+```sh
+omarchy plugin add https://github.com/nagualcode/omarchy-nagualstrip.git --enable
+# keep the app-grid ranking and the bottom reserved area
+mv "${XDG_STATE_HOME:-~/.local/state}/speakercorners" \
+   "${XDG_STATE_HOME:-~/.local/state}/nagualstrip" 2>/dev/null
+mv ~/.config/omarchy/.speakercorners-reserve \
+   ~/.config/omarchy/.nagualstrip-reserve 2>/dev/null
+omarchy restart shell
+```
+
+Then point `~/.config/hypr/monitors.lua` at `.nagualstrip-reserve` — the
+snippet is in the [nagualstrip README](https://github.com/nagualcode/omarchy-nagualstrip#bottom-reserved-area).
+The `wsToggleEnabled` key (read from the strip plugin's entry) still gates the
+bottom-center corner, so a pinned strip keeps that corner inert.
 
 ## ⚙️ Configuration
 
@@ -122,7 +123,7 @@ example:
   "enabled": true,
   "dwellMs": 139,          // how long the pointer must rest to fire (120–3000)
   "targetSize": 8,         // hot-corner hitbox, in px
-  "animations": true,      // false to disable the icon-panel / workspace-strip slide
+  "animations": true,      // false to disable the icon-panel slide
   "clockFormat": "dddd HH:mm",
   "cardWidth": "auto",     // or a fixed px width
   "topLeftAction": "cascade-floats",
@@ -135,11 +136,6 @@ example:
   "bottomRightCommand": "",
   "bottomCenterAction": "command",
   "bottomCenterCommand": "omarchy-shell workspace-overview toggle",
-  "wsScale": 0.5,           // workspace strip scale (height multiplier)
-  "wsStripGap": 21,         // gap between the strip and the screen bottom
-  "appMenuRows": 1,         // rows of icons in the smart app grid (1–6)
-  "wsStripRealIcons": true, // always real, full-color app icons in the cards
-  "wsInstantSwitch": true,  // card clicks switch workspace with no animation
   "floatGridOrder": [
     "action:browser",
     "action:terminal",
@@ -187,7 +183,7 @@ Edit `actionEntries` to change them.
 | `topRightAction`    | `command` / `toggle-window-modes` / `none` — window-mode toggle by default |
 | `bottomLeftAction`  | `command` / `toggle-hide-chrome` / `none` — hide-chrome toggle by default |
 | `bottomRightAction` | `command` / `mirador` / `none` — workspace overview by default |
-| `bottomCenterAction`| `command` / `none` — workspace strip by default     |
+| `bottomCenterAction`| `command` / `none` — `omarchy-shell workspace-overview toggle` by default, i.e. the separate `nagualstrip` plugin's strip. With only this plugin installed it is just a command you can rebind; the strip itself lives in [nagualstrip](https://github.com/nagualcode/omarchy-nagualstrip) |
 
 `toggle-window-modes` arranges the active workspace by majority instead of
 blindly flipping: if every window floats it goes tiled, if every window is tiled
@@ -205,9 +201,13 @@ the diagonal runs off an edge it continues from a shifted row; because the
 steps are always coprime with the free extents, no two windows ever land on the
 exact same corner, so a covered window always keeps a visible sliver under the
 one on top. The layout is idempotent: re-dwelling the corner just re-runs it.
-`toggle-hide-chrome` hides the
-workspace strip, bar and panel layer (bottom-left corner); both can also be
-triggered over IPC with `omarchy-shell speakercorners triggeraction <name>`.
+`toggle-hide-chrome` hides the bar and panel layer and, when
+[nagualstrip](https://github.com/nagualcode/omarchy-nagualstrip) is installed,
+fades its workspace strip together with them: it fires
+`omarchy-shell nagualstrip setchrome on` over IPC, the strip hides at once and
+flashes back on the next workspace switch (bottom-left corner). Any action can
+also be triggered over IPC with
+`omarchy-shell speakercorners triggeraction <name>`.
 
 Each `*Command` runs via `bash -lc`, so `omarchy-*` helpers and your shell
 niceties are all fair game.
@@ -226,16 +226,15 @@ them somewhere.
 - **Hyprland** (native `WlrLayershell` + Hyprland IPC)
 - A **Nerd Font** on the system (default: `JetBrainsMono Nerd Font`) for the
   advanced glyphs
-- **Font Awesome 7 Free** (shipped with Omarchy) for the app-grid launcher icon
+- Optional: [nagualstrip](https://github.com/nagualcode/omarchy-nagualstrip)
+  for the workspace strip / app grid the bottom-center corner drives
 
 ## 🧱 Roof tiles
 
-- `Speakercorners.qml` — the whole single-surface overlay
-- `AppLauncherMenu.qml` — the smart app grid (search, square cells, keynav)
-- `AppUsage.js` — app ranking model (most recent first) + JSON persistence
-- `IconModel.js` — app icon resolution for the workspace cards (a faithful
-  subset of Omarchy's HUD model)
-- `Workspaces.js` — Hyprland → plain-JS workspace model builder
+- `Speakercorners.qml` — the whole single-surface overlay: hot corners, the
+  icon panel and the embedded workspace overview
+- `IconModel.js` — app icon resolution (a faithful subset of Omarchy's HUD model)
+- `mirador/` — the ported workspace overview (has its own README)
 
 ## 🚗 License
 
