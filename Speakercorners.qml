@@ -326,7 +326,11 @@ Item {
   property var exposeSaved: []
   // Cell rects in global logical coordinates: hit-testing + the hover highlight.
   property var exposeRects: []
-  // Cell currently under the pointer, or null over empty space.
+  // The exact exposed rectangles of the painted windows (cell + ~3px air), also
+  // in global logical coordinates: the hover border hugs the window rather
+  // than its whole slot, while the slots above keep a generous pick area.
+  property var exposeWinRects: []
+  // Exposed window currently under the pointer, or null over empty space.
   property var exposeHoverRect: null
   // Global origin of the monitor the grid was computed on, so panel-local
   // pointer coordinates map back onto the grid.
@@ -346,7 +350,10 @@ Item {
     if (root.exposeActive || exposeMonitorsProc.running) return
     if (root.floatbarOpened) root.closeFloatbar()
     var wsId = Number(root.focusedWorkspaceId)
-    if (!isFinite(wsId)) return
+    // Only ordinary workspaces spread (ids are >= 1); 0 is the transient
+    // "no workspace yet" right after the shell starts and special workspaces
+    // carry negative ids, neither is a valid grid target.
+    if (!isFinite(wsId) || wsId < 1) return
     root.exposeWsId = wsId
     exposeMonitorsProc.running = true
   }
@@ -435,6 +442,8 @@ Item {
     var cellH = Math.floor((workH - gap * (rows - 1)) / rows)
     var saved = []
     var rects = []
+    var winRects = []
+    var PAD = 3
     var cmds = []
     for (var k = 0; k < n; k++) {
       var w = wins[k]
@@ -455,9 +464,11 @@ Item {
       root.pushExposeGeometry(cmds, base, nw, nh, px, py)
       saved.push(w)
       rects.push({ address: w.address, x: cellX, y: cellY, w: cellW, h: cellH })
+      winRects.push({ address: w.address, x: px - PAD, y: py - PAD, w: nw + 2 * PAD, h: nh + 2 * PAD })
     }
     root.exposeSaved = saved
     root.exposeRects = rects
+    root.exposeWinRects = winRects
     root.exposeHoverRect = null
     root.exposeOrigin = ({ x: monX, y: monY })
     root.runExposeBatch(cmds)
@@ -473,6 +484,7 @@ Item {
     root.exposeWsId = -1
     root.exposeSaved = []
     root.exposeRects = []
+    root.exposeWinRects = []
     root.exposeHoverRect = null
     root.clearExposeState()
     root.restoreExposeList(saved, String(keepAddress || ""))
@@ -555,7 +567,9 @@ Item {
   }
 
   // Pointer position is panel-local; the grid was computed in global logical
-  // coordinates, so the monitor origin is added back before hit-testing.
+  // coordinates, so the monitor origin is added back before hit-testing. The
+  // slot (ref) decides what is under the cursor, but the border follows the
+  // real exposed window so it never floats in a gap the window does not fill.
   function updateExposeHover(panelX, panelY) {
     if (!root.exposeActive) return
     var x = panelX + root.exposeOrigin.x
@@ -565,7 +579,12 @@ Item {
       var r = root.exposeRects[i]
       if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) { hit = r; break }
     }
-    if (hit !== root.exposeHoverRect) root.exposeHoverRect = hit
+    var win = null
+    if (hit) {
+      for (var w = 0; w < root.exposeWinRects.length; w++)
+        if (root.exposeWinRects[w].address === hit.address) { win = root.exposeWinRects[w]; break }
+    }
+    if (win !== root.exposeHoverRect) root.exposeHoverRect = win
   }
 
   // ---- bottom-left hot corner: hide the strip and the menu bar together ----
