@@ -1831,6 +1831,9 @@ Item {
       }
     }
 
+    // Translucent scrim over the hovered window. It carries no frame: the ring
+    // always echoes the window's own rounded corners from the look-and-feel
+    // (Style.cornerRadius) and tints the highlight with a 50% accent wash.
     Rectangle {
       id: exposeHighlight
       z: 61
@@ -1839,10 +1842,8 @@ Item {
       y: visible ? root.exposeHoverRect.y - root.exposeOrigin.y : 0
       width: visible ? root.exposeHoverRect.w : 0
       height: visible ? root.exposeHoverRect.h : 0
-      color: "transparent"
-      radius: 8
-      border.width: 3
-      border.color: Util.alpha(Color.accent, 0.9)
+      color: Util.alpha(Color.accent, 0.5)
+      radius: root.cornerRadius
     }
 
     // ---- Drag-and-drop layer: renders the tile being dragged, following the
