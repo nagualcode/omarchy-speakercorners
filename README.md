@@ -19,9 +19,38 @@ Dwell on a corner and it fires — everything else stays fully click-through.
 | bottom-left | **Zen** | hide chrome | Hides the menu bar and workspace strip for a clean, focused desktop; dwelling again brings everything back. |
 | top-left | **Cascade** | cascade floats | Floats every window of the active workspace and lays them out as a diagonal cascade (700×500, sliding right-and-down), so each one keeps a visible sliver. Idempotent — re-dwelling just re-runs it. |
 | top-right | **Arrange** | window modes | Converts the active workspace by majority: all floating → tiled, all tiled → floating; mixed workspaces follow the majority. When tiling, a fullscreen window is pulled back out so the split genuinely divides the screen. |
-| bottom-center | **Overview** | workspace strip | Summons the workspace strip / smart app grid — which live in the separate [nagualstrip](https://github.com/nagualcode/omarchy-nagualstrip) plugin. Speaker Corners drives it over IPC (`omarchy-shell workspace-overview toggle`); with only this plugin installed the corner is just a rebindable command. |
+| bottom-center | — | none (inert) | Nothing by default. You can point it at any command, e.g. the workspace strip / smart app grid of the separate [nagualstrip](https://github.com/nagualcode/omarchy-nagualstrip) plugin: `omarchy-shell speakercorners corner bottom-center command "omarchy-shell workspace-overview toggle"`. |
 
 Any corner can also be triggered over IPC: `omarchy-shell speakercorners triggeraction <name>`.
+
+### Command-line corner control
+
+A tiny wrapper (`omarchy-speakercorners-corner`, symlinked into
+`~/.local/bin`) assigns any gesture to any corner from the terminal — either a
+native function by name or an arbitrary command (like another plugin's) — and
+restores everything to the defaults with one call. No shell restart needed:
+
+```sh
+# native functions by name
+omarchy-speakercorners-corner bottom-right expose
+omarchy-speakercorners-corner bottom-left zen
+omarchy-speakercorners-corner top-left cascade
+omarchy-speakercorners-corner top-right arrange
+
+# your own command (any plugin / any omarchy-shell target)
+omarchy-speakercorners-corner top-right command "omarchy-shell workspace-overview toggle"
+
+# silence a corner, or restore all four named gestures + an inert bottom-center
+omarchy-speakercorners-corner bottom-center none
+omarchy-speakercorners-corner reset
+```
+
+The friendly names map to the internal actions: `expose` → `mirador`,
+`zen` → `toggle-hide-chrome`, `cascade` → `cascade-floats`,
+`arrange` → `toggle-window-modes`. Each call writes your `shell.json` and
+applies to the running corners immediately. Scripts that prefer raw IPC can
+use `omarchy-shell speakercorners corner "<edge> <action> [command...]"` with
+the payload quoted as a single argument.
 
 ## 🧊 Icon panel
 
@@ -37,9 +66,13 @@ launchers through the `uwsm` session, a **draggable grid** you persist to
 
 ```sh
 omarchy plugin add https://github.com/nagualcode/omarchy-speakercorners.git --enable
-# optional — powers the Overview corner (workspace strip + app grid)
+# optional — the corner that points at the workspace strip / app grid
 omarchy plugin add https://github.com/nagualcode/omarchy-nagualstrip.git --enable
 omarchy restart shell
+
+# optional, but powers the `omarchy-speakercorners-corner` command
+mkdir -p ~/.local/bin
+ln -sf ~/.config/omarchy/plugins/nagualcode.speakercorners/bin/omarchy-speakercorners-corner ~/.local/bin/
 ```
 
 ## 🗑️ Uninstall
@@ -80,8 +113,8 @@ Settings live in a `plugins` entry in `~/.config/omarchy/shell.json`
   "bottomLeftCommand": "",
   "bottomRightAction": "mirador",
   "bottomRightCommand": "",
-  "bottomCenterAction": "command",
-  "bottomCenterCommand": "omarchy-shell workspace-overview toggle"
+  "bottomCenterAction": "none",
+  "bottomCenterCommand": ""
 }
 ```
 
@@ -93,7 +126,7 @@ Settings live in a `plugins` entry in `~/.config/omarchy/shell.json`
 | `topRightAction` | `command` / `toggle-window-modes` / `none` |
 | `bottomLeftAction` | `command` / `toggle-hide-chrome` / `none` |
 | `bottomRightAction` | `command` / `mirador` / `none` — the live expose |
-| `bottomCenterAction` | `command` / `none` — `workspace-overview toggle` by default |
+| `bottomCenterAction` | `command` / `none` — inert (`none`) by default; point it at `omarchy-shell workspace-overview toggle` to summon nagualstrip's strip |
 
 Each `*Command` runs via `bash -lc`, so `omarchy-*` helpers and your shell
 niceties are all fair game.
@@ -114,6 +147,7 @@ niceties are all fair game.
 - `Speakercorners.qml` — the whole single-surface overlay: hot corners, the
   icon panel and the live expose
 - `IconModel.js` — app icon resolution (a faithful subset of Omarchy's HUD model)
+- `bin/omarchy-speakercorners-corner` — the command-line corner control
 
 ## 🚗 License
 

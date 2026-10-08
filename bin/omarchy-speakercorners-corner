@@ -1,0 +1,43 @@
+#!/bin/bash
+
+# omarchy:summary=Assign an action to a Speaker Corners hot corner, or reset every corner to the defaults
+# omarchy:group=plugin
+# omarchy:args=<corner> <expose|zen|cascade|arrange|none|command [cmd ...]> | reset
+# omarchy:examples=omarchy-speakercorners-corner top-right expose
+# omarchy:examples=omarchy-speakercorners-corner top-left cascade
+# omarchy:examples=omarchy-speakercorners-corner bottom-center command "omarchy-shell workspace-overview toggle"
+# omarchy:examples=omarchy-speakercorners-corner reset
+
+# Wrapper over the plugin's `corner` IPC: the shell's IPC handlers bind to an
+# exact argument count, so joining the user's words into one payload here lets
+# them type the command without hand-quoting it. Each call writes shell.json
+# and applies to the running corners immediately (see Speakercorners.qml).
+
+set -euo pipefail
+
+if (( $# == 0 )); then
+  cat <<'USAGE'
+Usage: omarchy-speakercorners-corner <corner> <action> [command...]
+       omarchy-speakercorners-corner reset
+
+corner   top-left | top-right | bottom-left | bottom-right | bottom-center
+action   expose | zen | cascade | arrange | none
+         command <anything you would run>   (e.g. another plugin's command)
+
+examples:
+  omarchy-speakercorners-corner top-right expose
+  omarchy-speakercorners-corner bottom-left zen
+  omarchy-speakercorners-corner top-left cascade
+  omarchy-speakercorners-corner bottom-center command "omarchy-shell workspace-overview toggle"
+  omarchy-speakercorners-corner reset   # back to plugin defaults
+USAGE
+  exit 1
+fi
+
+payload="$*"
+
+if [[ $payload == reset ]]; then
+  omarchy-shell speakercorners corner reset
+else
+  omarchy-shell speakercorners corner "$payload"
+fi

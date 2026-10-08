@@ -35,12 +35,17 @@ import "IconModel.js" as IconModel
 //       "topRightAction": "toggle-window-modes",
 //       "bottomLeftAction": "toggle-hide-chrome",  "bottomLeftCommand": "",
 //       "bottomRightAction": "mirador",
-//       "bottomCenterAction": "command","bottomCenterCommand": "omarchy-shell workspace-overview toggle" }
+//       "bottomCenterAction": "none" }
 //   ]
 //
-// The bottom-center corner defaults to a command that drives the strip
-// plugin's legacy `workspace-overview` IPC target, so installing
-// nagualcode.nagualstrip keeps that corner working unchanged.
+// Corners can also be reassigned from the command line (wrapper in bin/,
+// symlinked to ~/.local/bin):
+//   omarchy-speakercorners-corner <corner> <expose|zen|cascade|arrange|none|command [cmd...]>
+//   omarchy-speakercorners-corner reset          # back to the defaults above
+// Each call writes shell.json and applies to the running corners at once.
+// The bottom-center corner is inert by default; point it at nagualstrip's
+// legacy `workspace-overview` IPC target to summon the workspace strip:
+//   omarchy-speakercorners-corner bottom-center command "omarchy-shell workspace-overview toggle"
 //
 // The "mirador" action runs the live expose: every window of the focused
 // workspace is spread over a gap grid in place — real windows, no previews,
@@ -103,7 +108,7 @@ Item {
   }
 
   function actionFor(edge) {
-    if (edge === "top-left") return String(setting("topLeftAction", "none"))
+    if (edge === "top-left") return String(setting("topLeftAction", "cascade-floats"))
     if (edge === "top-right") return String(setting("topRightAction", "toggle-window-modes"))
     if (edge === "bottom-left") return String(setting("bottomLeftAction", "toggle-hide-chrome"))
     if (edge === "bottom-right") return String(setting("bottomRightAction", "mirador"))
@@ -245,7 +250,34 @@ Item {
     return false
   }
 
+  // The friendly names users meet everywhere (corners, IPC, README) map to
+  // the internal action ids; internal ids pass through untouched, so both
+  // "expose" and "mirador" work interchangeably.
+  function nativeActionFor(name) {
+    switch (String(name)) {
+    case "expose": return "mirador"
+    case "zen": return "toggle-hide-chrome"
+    case "cascade": return "cascade-floats"
+    case "arrange": return "toggle-window-modes"
+    default: return String(name)
+    }
+  }
+
+  // Canonical default for each corner: the four named gestures in their slots
+  // and the bottom-center corner left inert. `corner reset` restores exactly
+  // this and clears every *Command.
+  function cornerDefaults() {
+    return {
+      "top-left":      { action: "cascade-floats",      command: "" },
+      "top-right":     { action: "toggle-window-modes", command: "" },
+      "bottom-left":   { action: "toggle-hide-chrome",  command: "" },
+      "bottom-right":  { action: "mirador",             command: "" },
+      "bottom-center": { action: "none",                command: "" }
+    }
+  }
+
   function trigger(action, command, edge) {
+    action = root.nativeActionFor(action)
     switch (String(action)) {
     case "menu":
       Quickshell.execDetached(["omarchy-shell", "shell", "toggle", "omarchy.menu", '{"menu":"root"}'])
@@ -1351,6 +1383,91 @@ Item {
     return cfg
   }
 
+  // ---- Corner functions over IPC ------------------------------------------
+  // `omarchy-shell speakercorners corner <corner> <expose|zen|cascade|arrange|none|command [cmd...]>`
+  // assigns a gesture to any corner, and `corner reset` puts every corner back
+  // on the plugin defaults (bottom-center inert). Writes land in shell.json
+  // and apply immediately, without a shell restart.
+
+  function cornerKeysFor(edge) {
+    switch (String(edge)) {
+    case "top-left": return ["topLeftAction", "topLeftCommand"]
+    case "top-right": return ["topRightAction", "topRightCommand"]
+    case "bottom-left": return ["bottomLeftAction", "bottomLeftCommand"]
+    case "bottom-right": return ["bottomRightAction", "bottomRightCommand"]
+    case "bottom-center": return ["bottomCenterAction", "bottomCenterCommand"]
+    default: return null
+    }
+  }
+
+  function cornerCommand(payload) {
+    root.readConfig()
+    var text = String(payload || "").trim()
+    if (text.length === 0)
+      return "usage: corner <top-left|top-right|bottom-left|bottom-right|bottom-center> "
+        + "<expose|zen|cascade|arrange|none|command [cmd...]> — or corner reset"
+    if (text === "reset") {
+      root.cornerReset()
+      return "all corners back to default"
+    }
+    var sp = text.indexOf(" ")
+    if (sp <= 0) return "unknown corner or missing function (try: corner reset)"
+    var edge = text.substr(0, sp).trim()
+    var rest = text.substr(sp + 1).trim()
+    var keys = root.cornerKeysFor(edge)
+    if (!keys) return "unknown corner: " + edge
+    var sp2 = rest.indexOf(" ")
+    var name = (sp2 < 0 ? rest : rest.substr(0, sp2)).trim()
+    var cmdText = (sp2 < 0 ? "" : rest.substr(sp2 + 1).trim())
+    var action = String(name)
+    var native = ["expose", "zen", "cascade", "arrange", "none"]
+    if (native.indexOf(action) === -1 && action !== "command")
+      return "unknown function: " + name
+      + " (expose, zen, cascade, arrange, none, command [cmd...])"
+    action = root.nativeActionFor(action)
+    var updates = {}
+    if (action === "command") {
+      if (cmdText.length === 0) return "command needs a command line to run"
+      updates[keys[0]] = "command"
+      updates[keys[1]] = cmdText
+    } else {
+      updates[keys[0]] = action
+      updates[keys[1]] = ""
+    }
+    root.applyCornerSettings(updates)
+    return edge + " -> " + (name === "command" ? "command" : name)
+      + (action === "command" ? " \"" + cmdText + "\"" : "")
+  }
+
+  function cornerReset() {
+    var defaults = root.cornerDefaults()
+    var updates = {}
+    for (var edge in defaults) {
+      var keys = root.cornerKeysFor(edge)
+      updates[keys[0]] = defaults[edge].action
+      updates[keys[1]] = defaults[edge].command
+    }
+    root.applyCornerSettings(updates)
+  }
+
+  // Shared writer: update the speakercorners entry in shell.json (ignoring the
+  // echo through the FileView) and slide the new values into pluginSettings so
+  // the running corners react immediately, exactly like the grid drag does.
+  function applyCornerSettings(updates) {
+    var cfg = root.parseUserConfig(userShellFile.text())
+    if (!Array.isArray(cfg.plugins)) cfg.plugins = []
+    var entry = null
+    for (var i = 0; i < cfg.plugins.length; i++)
+      if (cfg.plugins[i] && String(cfg.plugins[i].id) === "speakercorners") { entry = cfg.plugins[i]; break }
+    if (!entry) { entry = {}; cfg.plugins.push(entry) }
+    entry.id = "speakercorners"
+    for (var k in updates) entry[k] = updates[k]
+    var payload = JSON.stringify(cfg, null, 2) + "\n"
+    root.lastWrittenShellText = payload
+    userShellFile.setText(payload)
+    for (var k in updates) root.pluginSettings[k] = updates[k]
+  }
+
   function labelFor(id) {
     var meta = barWidgetRegistry ? barWidgetRegistry.metadataFor(id) : null
     if (meta && meta.displayName && String(meta.displayName).trim().length > 0)
@@ -1640,6 +1757,12 @@ Item {
       root.trigger(String(action || ""))
       return "ok"
     }
+    // Assign a gesture to a corner, or reset every corner to the defaults:
+    //   omarchy-shell speakercorners corner bottom-right expose
+    //   omarchy-shell speakercorners corner top-right command "omarchy-shell workspace-overview toggle"
+    //   omarchy-shell speakercorners corner reset
+    function corner(payload: string): string { return root.cornerCommand(payload) }
+    function cornerReset(): string { root.cornerReset(); return "all corners back to default" }
   }
 
   // Legacy targets so existing commands/scripts keep working even though the
