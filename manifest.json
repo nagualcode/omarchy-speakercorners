@@ -5,7 +5,7 @@
   "version": "2.0.0",
   "author": "nagual",
   "license": "MIT",
-  "description": "Hot-corner actions (including the Omarchy menu), the icon panel with embedded widgets (bottom-left) and the embedded mirador overlay, in one masked, click-through surface. The floating workspace strip lives in nagualcode.nagualstrip.",
+  "description": "Hot-corner actions (including the Omarchy menu), the icon panel with embedded widgets (bottom-left) and the live expose that spreads the workspace's real windows (bottom-right), in one masked, click-through surface. The floating workspace strip lives in nagualcode.nagualstrip.",
   "kinds": [
     "panel"
   ],

@@ -21,27 +21,26 @@ bloat — one surface, `~1.5 KB` of attitude per corner.
 
 ## 🎯 What it does
 
-- **🖱️ Five hot corners** — park the cursor, let a tiny dwell timer fire: summon
-  the workspace overview, toggle window modes, toggle the icon panel, or run
-  your own command (the bottom-center corner ships
+- **🖱️ Five hot corners** — park the cursor, let a tiny dwell timer fire: run
+  the live expose, cascade the floats, toggle window modes, toggle the icon
+  panel, or run your own command (the bottom-center corner ships
   `omarchy-shell workspace-overview toggle`, which is how the separate
   `nagualstrip` plugin is summoned from the corners). Everything else stays
   fully click-through.
-- **🗺️ Workspace overview (bottom-right)** — a port of the Mirador workspace
-  overview (`mirador/`), summoned straight from a hot corner. It keeps its own
-  full-screen overlay surface (exclusive keyboard focus while open) and dims the
-  desktop behind it with the same scrim the Omarchy menu uses.
-  The bottom-right corner opens a **current-workspace window viewer**: only the
-  windows of the workspace you are on, no workspace cards, no workspace-number
-  badge and no grid — the windows are packed like macOS **Exposé**, so all of them
-  are visible at once, none overlaps another, and each keeps its real aspect
-  ratio (floating windows that cover each other on the desktop are pulled apart
-  here so you can always click the one you want). It is previews only (there is
-  no "app icons first, then previews" flash), and clicking a window brings it to
-  the top of the stack. The corner is a plain toggle: press it again to close.
-  The full multi-workspace overview is still one `Super` press (or a 3-finger
-  swipe up) away, and `omarchy-shell mirador toggle` opens it directly.
-  It is addressed by the `mirador` corner action or `omarchy-shell mirador toggle`.
+- **🗺️ Live expose (bottom-right)** — the classic Exposé, but with the *real*
+  windows: the corner records where every window of the focused workspace is,
+  floats them and moves them into a gap grid so all of them are visible at once,
+  none overlapping, each keeping its aspect ratio (never upscaled). Nothing is
+  screenshotted — entering and leaving is a single `hyprctl --batch` of
+  dispatches, so there is no preview layer to burn CPU. While the spread is up
+  the panel owns the pointer (the desktop cannot be clicked through, and
+  `follow_mouse` cannot reshuffle the focus): a cell highlights under the
+  cursor, and clicking it restores every original geometry and brings that
+  window to the front. Clicking empty space, pressing `Esc` or dwelling the
+  corner again restores everything. The originals are parked in
+  `~/.local/state/omarchy/speakercorners-expose.json`, so a shell restart in the
+  middle of a spread puts the desktop back on the next start. It is addressed by
+  the `mirador` corner action or `omarchy-shell mirador toggle`.
 - **🌆 Workspace strip + app grid → nagualstrip** — the floating workspace
   strip (bottom-center), its right-click settings popup and the smart
   MRU-ranked app grid moved out to their own plugin:
@@ -81,7 +80,7 @@ omarchy plugin remove nagualcode.speakercorners
 
 ## 📦 Migration from v1 (when the strip lived here)
 
-Speaker Corners **2.0** is hot corners + icon panel + workspace overview only.
+Speaker Corners **2.0** is hot corners + icon panel + live expose only.
 The workspace strip, its settings popup, the smart app grid and the `ws*`
 config keys moved out to their own plugin,
 [nagualstrip](https://github.com/nagualcode/omarchy-nagualstrip).
@@ -182,7 +181,7 @@ Edit `actionEntries` to change them.
 | `topLeftAction`     | `command` / `cascade-floats` / `toggle-window-modes` / `none` — cascade-floats by default |
 | `topRightAction`    | `command` / `toggle-window-modes` / `none` — window-mode toggle by default |
 | `bottomLeftAction`  | `command` / `toggle-hide-chrome` / `none` — hide-chrome toggle by default |
-| `bottomRightAction` | `command` / `mirador` / `none` — workspace overview by default |
+| `bottomRightAction` | `command` / `mirador` / `none` — live expose by default |
 | `bottomCenterAction`| `command` / `none` — `omarchy-shell workspace-overview toggle` by default, i.e. the separate `nagualstrip` plugin's strip. With only this plugin installed it is just a command you can rebind; the strip itself lives in [nagualstrip](https://github.com/nagualcode/omarchy-nagualstrip) |
 
 `toggle-window-modes` arranges the active workspace by majority instead of
@@ -232,9 +231,8 @@ them somewhere.
 ## 🧱 Roof tiles
 
 - `Speakercorners.qml` — the whole single-surface overlay: hot corners, the
-  icon panel and the embedded workspace overview
+  icon panel and the live expose
 - `IconModel.js` — app icon resolution (a faithful subset of Omarchy's HUD model)
-- `mirador/` — the ported workspace overview (has its own README)
 
 ## 🚗 License
 

@@ -12,8 +12,8 @@ import qs.Commons
 import qs.Ui
 import "IconModel.js" as IconModel
 
-// Speaker Corners — hot corners, icon panel and the embedded mirador
-// overlay, in one plugin.
+// Speaker Corners — hot corners, icon panel and the live expose, in one
+// plugin.
 //
 // One always-mapped fullscreen Overlay window holds:
 //   * embedded hot-corner recognition (top-left / top-right / bottom-left /
@@ -42,18 +42,13 @@ import "IconModel.js" as IconModel
 // plugin's legacy `workspace-overview` IPC target, so installing
 // nagualcode.nagualstrip keeps that corner working unchanged.
 //
-// The "mirador" action summons the embedded workspace-overview overlay from
-// the ported mirador plugin (see mirador/README.md). The overlay is always
-// kept loaded; its PanelWindow surfaces only while the overview is open.
-//
-// The bottom-right corner cycles the overlay through three states, one trigger
-// per press:
-//   1st trigger → mode "1": the current workspace only, windows laid out in a
-//                tiling-style grid with no overlap (Mirage single view)
-//   2nd trigger → mode "2": the full multi-workspace overview (Mirage overview)
-//   3rd trigger → close
-// Any other dismissal path (window click, Esc, background click) resets the
-// chain, so the next corner trigger starts again at mode "1".
+// The "mirador" action runs the live expose: every window of the focused
+// workspace is spread over a gap grid in place — real windows, no previews,
+// no screencopy — and this panel takes the pointer over through its input
+// region. Clicking a cell puts every window back exactly where it was and
+// raises the clicked one; empty click, Esc or another corner dwell restores
+// everything (the original geometries are also parked in a state file, so a
+// shell restart mid-expose puts the desktop back too).
 Item {
   id: root
 
@@ -74,9 +69,9 @@ Item {
   // The shell's isPluginOpen() reads `opened` off the loaded item; keep it in
   // sync so `omarchy-shell shell toggle speakercorners` round-trips cleanly.
   readonly property bool opened: root.anyOpen
-  // The float bar takes full-screen keyboard focus; everything else stays
-  // click-through through the mask.
-  readonly property bool keysWanted: root.floatbarOpened
+  // The float bar and the live expose both take full-screen keyboard focus;
+  // everything else stays click-through through the mask.
+  readonly property bool keysWanted: root.floatbarOpened || root.exposeActive
   // Whether the bottom-center hot corner is armed, taken from the nagualstrip
   // plugin's shell.json entry (see readConfig()).
   property bool stripToggleEnabled: true
@@ -231,8 +226,11 @@ Item {
       Quickshell.execDetached(["omarchy-shell", "-q", target, method || "toggle"])
       return true
     }
-    if (target === "mirador") {
-      if (method === "toggle") { root.toggleMirador() } else if (method === "open" || method === "summon") { root.openMirador() } else if (method === "close" || method === "hide" || method === "dismiss") { root.closeMirador() } else return false
+    if (target === "mirador" || target === "expose") {
+      if (method === "toggle" || method === "cycle") { root.toggleExpose() }
+      else if (method === "open" || method === "summon") { root.startExpose() }
+      else if (method === "close" || method === "hide" || method === "dismiss") { root.exitExpose("") }
+      else return false
       return true
     }
     if (target === "speakercorners") {
@@ -290,7 +288,8 @@ Item {
       root.cascadeWorkspaceFloats()
       break
     case "mirador":
-      root.triggerMirador(edge)
+    case "expose":
+      root.toggleExpose()
       break
     case "toggle-hide-chrome":
       root.toggleChromeHidden()
@@ -304,92 +303,269 @@ Item {
   function triggerCorner(edge) {
     root.readConfig()
     if (!root.cornersEnabled) return
+    // While the expose is up only its own corner may fire (the toggle-off):
+    // any other action would move windows around underneath the spread.
+    if (root.exposeActive && edge !== "bottom-right") return
     root.trigger(root.actionFor(edge), root.commandFor(edge), edge)
   }
 
-  // ---- Embedded workspace-overview overlay (ported mirador) ----------------
-  // The workspace-overview gesture ("mirador") is embedded here so this plugin
-  // stays the only surface plugin on the machine. Its own PanelWindow carries
-  // the exclusive keyboard focus while open and an overlay layer-surface of its
-  // own, keeping the corner mask on speakercorners' panel untouched.
-  Loader {
-    id: miradorLoader
-    source: "mirador/WorkspaceOverview.qml"
-    active: true
-    asynchronous: true
+  // ---- Live expose: spread the workspace's real windows --------------------
+  // The "mirador" gesture records every window of the focused workspace, floats
+  // and moves the *real* windows into a gap grid (each one fully visible, no
+  // overlap, aspect kept, never upscaled) and lets this panel take the pointer
+  // over through its input region. Nothing is screenshotted: entering and
+  // leaving cost one batch of hyprctl dispatches instead of a screencopy per
+  // window.
+  //
+  //   toggle (corner / IPC) → spread out
+  //   click a cell          → restore all originals + raise/focus that window
+  //   click empty / Esc /
+  //   re-dwell the corner   → restore all originals
+  property bool exposeActive: false
+  // Originals in grid order: {address, x, y, w, h, floating, fullscreen, fullscreenClient}
+  property var exposeSaved: []
+  // Cell rects in global logical coordinates: hit-testing + the hover highlight.
+  property var exposeRects: []
+  // Cell currently under the pointer, or null over empty space.
+  property var exposeHoverRect: null
+  // Global origin of the monitor the grid was computed on, so panel-local
+  // pointer coordinates map back onto the grid.
+  property var exposeOrigin: ({ x: 0, y: 0 })
+  property int exposeWsId: -1
+  property string exposeMonitorsJson: ""
+  readonly property string exposeStatePath: Quickshell.env("HOME") + "/.local/state/omarchy/speakercorners-expose.json"
+
+  function toggleExpose() {
+    if (root.exposeActive) root.exitExpose("")
+    else root.startExpose()
+  }
+
+  function startExpose() {
+    // A second dwell while the spread is still in flight is a no-op, never a
+    // half-open state.
+    if (root.exposeActive || exposeMonitorsProc.running) return
+    if (root.floatbarOpened) root.closeFloatbar()
+    var wsId = Number(root.focusedWorkspaceId)
+    if (!isFinite(wsId)) return
+    root.exposeWsId = wsId
+    exposeMonitorsProc.running = true
+  }
+
+  Process {
+    id: exposeMonitorsProc
+    command: ["hyprctl", "-j", "monitors"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.exposeMonitorsJson = String(text || "")
+        exposeClientsProc.running = true
+      }
+    }
+  }
+  Process {
+    id: exposeClientsProc
+    command: ["hyprctl", "-j", "clients"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.applyExpose(text)
+    }
+  }
+
+  function applyExpose(clientsText) {
+    var wsId = Number(root.exposeWsId)
+    root.exposeWsId = -1
+    // -1 is the "no spread in flight" sentinel left by a stale run.
+    if (!isFinite(wsId) || wsId === -1) return
+    var clients = []
+    try { clients = JSON.parse(String(clientsText || "[]")) } catch (e) { return }
+    if (!Array.isArray(clients)) return
+    var monitors = []
+    try { monitors = JSON.parse(String(root.exposeMonitorsJson || "[]")) } catch (e) { root.exposeMonitorsJson = ""; return }
+    root.exposeMonitorsJson = ""
+    if (!Array.isArray(monitors) || monitors.length === 0) return
+    var m = null
+    for (var j = 0; j < monitors.length; j++) if (monitors[j] && monitors[j].focused === true) { m = monitors[j]; break }
+    if (!m) m = monitors[0]
+    var scale = m.scale || 1
+    var lw = Math.round(m.width / scale)
+    var lh = Math.round(m.height / scale)
+    var res = (Array.isArray(m.reserved) && m.reserved.length === 4) ? m.reserved : [0, 0, 0, 0]
+    var resL = Number(res[0]) || 0
+    var resR = Number(res[2]) || 0
+    var resB = Number(res[3]) || 0
+    // Same box the cascade and the hyprbar double-click expand use: reserved
+    // strips out, 10px top inset plus a 1px border on top of it.
+    var workTop = 10
+    var monX = Number(m.x) || 0
+    var monY = Number(m.y) || 0
+    var workX = monX + resL + 1
+    var workY = monY + workTop + 1
+    var workW = lw - resL - resR - 2
+    var workH = lh - resB - workTop - 2
+    var wins = []
+    for (var i = 0; i < clients.length; i++) {
+      var c = clients[i]
+      if (!c || c.mapped === false || c.hidden === true) continue
+      if (!c.workspace || Number(c.workspace.id) !== wsId) continue
+      var addr = String(c.address || "")
+      if (!/^0x[0-9a-fA-F]+$/.test(addr)) continue
+      var sz = Array.isArray(c.size) ? c.size : [0, 0]
+      var at = Array.isArray(c.at) ? c.at : [0, 0]
+      wins.push({
+        address: addr,
+        x: Number(at[0]) || 0,
+        y: Number(at[1]) || 0,
+        w: Math.max(1, Number(sz[0]) || 1),
+        h: Math.max(1, Number(sz[1]) || 1),
+        floating: c.floating === true,
+        fullscreen: Number(c.fullscreen) || 0,
+        fullscreenClient: Number(c.fullscreenClient) || 0
+      })
+    }
+    // A lone window, or none at all: the workspace already reads as-is, so the
+    // corner must do nothing (the old eligibility rule, minus the "at least one
+    // floats" half — tiling is spread and restored just fine now).
+    if (wins.length < 2) return
+
+    var n = wins.length
+    var cols = Math.ceil(Math.sqrt(n))
+    var rows = Math.ceil(n / cols)
+    var gap = 12
+    var cellW = Math.floor((workW - gap * (cols - 1)) / cols)
+    var cellH = Math.floor((workH - gap * (rows - 1)) / rows)
+    var saved = []
+    var rects = []
+    var cmds = []
+    for (var k = 0; k < n; k++) {
+      var w = wins[k]
+      var cellX = workX + (k % cols) * (cellW + gap)
+      var cellY = workY + Math.floor(k / cols) * (cellH + gap)
+      // Aspect-fit inside the cell and never upscale: a small window keeps its
+      // proportions instead of being stretched across the lattice.
+      var fit = Math.min(1, cellW / w.w, cellH / w.h)
+      var nw = Math.max(1, Math.round(w.w * fit))
+      var nh = Math.max(1, Math.round(w.h * fit))
+      var px = cellX + Math.round((cellW - nw) / 2)
+      var py = cellY + Math.round((cellH - nh) / 2)
+      var base = 'window = "address:' + w.address + '"'
+      if (w.fullscreen !== 0 || w.fullscreenClient !== 0)
+        cmds.push('dispatch hl.dsp.window.fullscreen_state({ internal = 0, client = 0, ' + base + ' })')
+      if (!w.floating)
+        cmds.push('dispatch hl.dsp.window.float({ action = "toggle", ' + base + ' })')
+      root.pushExposeGeometry(cmds, base, nw, nh, px, py)
+      saved.push(w)
+      rects.push({ address: w.address, x: cellX, y: cellY, w: cellW, h: cellH })
+    }
+    root.exposeSaved = saved
+    root.exposeRects = rects
+    root.exposeHoverRect = null
+    root.exposeOrigin = ({ x: monX, y: monY })
+    root.runExposeBatch(cmds)
+    root.persistExposeState()
+    root.exposeActive = true
+  }
+
+  function exitExpose(keepAddress) {
+    var saved = root.exposeSaved
+    root.exposeActive = false
+    // Flag any spread still in flight as cancelled so its applyExpose() is a
+    // no-op instead of snapping the workspace open again after we closed it.
+    root.exposeWsId = -1
+    root.exposeSaved = []
+    root.exposeRects = []
+    root.exposeHoverRect = null
+    root.clearExposeState()
+    root.restoreExposeList(saved, String(keepAddress || ""))
+  }
+
+  // Put a list of saved originals back (exit and crash recovery share it).
+  function restoreExposeList(list, keepAddress) {
+    if (!Array.isArray(list) || list.length === 0) return
+    var cmds = []
+    for (var i = 0; i < list.length; i++) {
+      var w = list[i]
+      if (!w || !w.address) continue
+      var base = 'window = "address:' + w.address + '"'
+      if (!w.floating) {
+        // Was tiled: back into the layout, which owns its geometry again.
+        cmds.push('dispatch hl.dsp.window.float({ action = "toggle", ' + base + ' })')
+      } else {
+        // Was floating: restore its own rectangle (a previously fullscreen
+        // window gets both, so leaving fullscreen later lands where it was).
+        root.pushExposeGeometry(cmds, base, Number(w.w), Number(w.h), Number(w.x), Number(w.y))
+      }
+      if (Number(w.fullscreen) !== 0 || Number(w.fullscreenClient) !== 0)
+        cmds.push('dispatch hl.dsp.window.fullscreen_state({ internal = ' + (Number(w.fullscreen) || 0)
+          + ', client = ' + (Number(w.fullscreenClient) || 0) + ', ' + base + ' })')
+    }
+    if (keepAddress) {
+      // Everything is back in place; the picked window goes on top and takes
+      // the focus.
+      cmds.push('dispatch hl.dsp.window.alter_zorder({ mode = "top", window = "address:' + keepAddress + '" })')
+      cmds.push('dispatch hl.dsp.focus({ window = "address:' + keepAddress + '" })')
+    }
+    root.runExposeBatch(cmds)
+  }
+
+  // Resize is centre-anchored in this Hyprland build, so a single resize+move
+  // can land one pixel off when the centre sits on a .5 (odd exposed sizes are
+  // the common case). Running the pair twice converges: the first pass settles
+  // the size, the second one — from an exact position — confirms it, and the
+  // trailing move pins the corner back to the requested x/y.
+  function pushExposeGeometry(cmds, base, w, h, x, y) {
+    cmds.push('dispatch hl.dsp.window.resize({ x = ' + w + ', y = ' + h + ', ' + base + ' })')
+    cmds.push('dispatch hl.dsp.window.move({ x = ' + x + ', y = ' + y + ', ' + base + ' })')
+    cmds.push('dispatch hl.dsp.window.resize({ x = ' + w + ', y = ' + h + ', ' + base + ' })')
+    cmds.push('dispatch hl.dsp.window.move({ x = ' + x + ', y = ' + y + ', ' + base + ' })')
+  }
+
+  // One process for the whole sequence: the per-window dispatches are ordered
+  // (unfloat before resize before move) and the desktop does not flicker
+  // through a dozen racing hyprctl spawns.
+  function runExposeBatch(cmds) {
+    if (!Array.isArray(cmds) || cmds.length === 0) return
+    Quickshell.execDetached(["hyprctl", "--batch", cmds.join("; ")])
+  }
+
+  function persistExposeState() {
+    var payload = JSON.stringify({ windows: root.exposeSaved })
+    Quickshell.execDetached(["bash", "-c", "printf '%s' \"$1\" > \"$0\"", root.exposeStatePath, payload])
+  }
+
+  function clearExposeState() {
+    Quickshell.execDetached(["rm", "-f", root.exposeStatePath])
+  }
+
+  // Crash safety: if the shell dies while the workspace is spread out, the
+  // parked originals are put back on the next start (and the file dropped).
+  FileView {
+    id: exposeStateFile
+    path: root.exposeStatePath
+    printErrors: false
     onLoaded: {
-      console.log("speakercorners: mirador overlay loaded", !!item, item ? item.status : "-")
-      if (!item) return
-      item.omarchyPath = root.omarchyPath
-      // Use a stub manifest so dismiss()'s shell.hide("mirador") stays a
-      // harmless no-op (the mirador plugin is no longer enabled).
-      item.manifest = ({ id: "mirador" })
-      if ("shell" in item) {
-        item.shell = root.shell
-        if (item.shellChanged) item.shellChanged.connect(root.syncMiradorShell)
-      }
-    }
-    onStatusChanged: {
-      console.log("speakercorners: mirador overlay status", status)
-      if (status === Loader.Error) {
-        console.warn("speakercorners: embedded mirador overlay failed to load:")
-      }
+      if (root.exposeActive) return
+      var str = String(text() || "")
+      if (str.trim().length === 0) return
+      var data = null
+      try { data = JSON.parse(str) } catch (e) {}
+      if (data && Array.isArray(data.windows) && data.windows.length > 0)
+        root.restoreExposeList(data.windows, "")
+      Quickshell.execDetached(["rm", "-f", root.exposeStatePath])
     }
   }
 
-  function syncMiradorShell() {
-    if (miradorLoader.item && "shell" in miradorLoader.item)
-      miradorLoader.item.shell = root.shell
-  }
-
-  function toggleMirador() {
-    if (miradorLoader.item) miradorLoader.item.toggle()
-  }
-
-  function openMirador() {
-    if (miradorLoader.item) miradorLoader.item.open("{}")
-  }
-
-  function closeMirador() {
-    if (miradorLoader.item) miradorLoader.item.dismiss()
-  }
-
-  // ── Bottom-right corner trigger ───────────────────────────────────────────
-  // The corner is a plain toggle over the current-workspace window viewer: the
-  // windows of the focused workspace only, no workspace cards, no number badge.
-  // Pressing it while a different presentation (the full multi-workspace
-  // overview) is open switches that presentation in place instead of stacking a
-  // second overlay, and pressing it again closes the viewer.
-  function triggerMirador(edge) {
-    if (edge === "bottom-right") root.toggleMiradorWindows()
-    else root.toggleMirador()
-  }
-
-  function toggleMiradorWindows() {
-    var mirador = miradorLoader.item
-    if (!mirador) return
-    if (!mirador.opened) {
-      root.openMiradorSingle()
-      return
+  // Pointer position is panel-local; the grid was computed in global logical
+  // coordinates, so the monitor origin is added back before hit-testing.
+  function updateExposeHover(panelX, panelY) {
+    if (!root.exposeActive) return
+    var x = panelX + root.exposeOrigin.x
+    var y = panelY + root.exposeOrigin.y
+    var hit = null
+    for (var i = 0; i < root.exposeRects.length; i++) {
+      var r = root.exposeRects[i]
+      if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) { hit = r; break }
     }
-    // Once the viewer is open the corner always closes it; eligibility only
-    // governs opening. The guard lives in openMiradorSingle().
-    if (mirador.activePresentation === "single") {
-      mirador.dismiss()
-      return
-    }
-    if (!mirador.exposeEligible()) return
-    mirador.setPresentation("single")
-  }
-
-  function openMiradorSingle() {
-    var mirador = miradorLoader.item
-    if (!mirador) return
-    // Exposé is only useful when the workspace has more than one window and at
-    // least one of them floats. A lone window, or an all-tiled workspace, is
-    // already legible, so the bottom-right corner must do nothing.
-    if (!mirador.exposeEligible()) return
-    mirador.open('{"presentation":"single"}')
+    if (hit !== root.exposeHoverRect) root.exposeHoverRect = hit
   }
 
   // ---- bottom-left hot corner: hide the strip and the menu bar together ----
@@ -1348,6 +1524,9 @@ Item {
     root.refreshWidgetEntries()
     root.pollIndicators()
     root.checkSystemUpdate()
+    // The two surfaces both want the full-screen mask and the keyboard; the
+    // spread gives way first.
+    if (root.exposeActive) root.exitExpose("")
     root.floatbarOpened = true
     // Two Overlay surfaces would otherwise fight over layer stacking and the
     // keyboard: the strip steps aside for as long as the panel is up.
@@ -1404,7 +1583,7 @@ Item {
 
   // The workspace strip, its configuration popup and the smart app grid live
   // in the nagualcode.nagualstrip plugin; this plugin keeps the hot corners,
-  // the icon panel and the embedded mirador overlay.
+  // the icon panel and the live expose.
 
   // ========================================================================
   //  Shell panel contract + legacy IPC targets
@@ -1426,6 +1605,7 @@ Item {
     return (root.anyOpen ? "open" : "closed")
       + " float=" + (root.floatbarOpened ? "1" : "0")
       + " chrome=" + (root.chromeHidden ? "1" : "0")
+      + " expose=" + (root.exposeActive ? "1" : "0")
   }
 
   IpcHandler {
@@ -1453,31 +1633,24 @@ Item {
     function state(): string { return root.floatbarOpened ? "open" : "closed" }
   }
 
-  // Legacy target so existing commands and keybindings (`omarchy-shell mirador
-  // toggle`) keep driving the embedded workspace-overview overlay.
+  // The "mirador" target keeps its name so existing commands and keybindings
+  // (`omarchy-shell mirador toggle`) now drive the live expose.
   IpcHandler {
     target: "mirador"
-    function open(payload: string): string { root.openMirador(); return "ok" }
-    function close(): string { root.closeMirador(); return "ok" }
-    function toggle(): string { root.toggleMirador(); return "ok" }
-    function cycle(): string { root.toggleMiradorWindows(); return "ok" }
-    function summon(payload: string): string { root.openMirador(); return "ok" }
-    function dismiss(): string { root.closeMirador(); return "ok" }
-    function state(): string {
-      var err = miradorLoader && miradorLoader.errorString ? miradorLoader.errorString() : ""
-      if (!miradorLoader.item) return "loading status=" + miradorLoader.status + " err=" + message(err)
-      return miradorLoader.item.opened ? "open" : "closed"
-    }
+    function open(payload: string): string { root.startExpose(); return "ok" }
+    function close(): string { root.exitExpose(""); return "ok" }
+    function toggle(): string { root.toggleExpose(); return "ok" }
+    function cycle(): string { root.toggleExpose(); return "ok" }
+    function summon(payload: string): string { root.startExpose(); return "ok" }
+    function dismiss(): string { root.exitExpose(""); return "ok" }
+    function state(): string { return root.exposeActive ? "open" : "closed" }
     function diagnose(): string {
-      var err = miradorLoader && miradorLoader.errorString ? miradorLoader.errorString() : ""
-      if (!miradorLoader.item) return "loading status=" + miradorLoader.status + " err=" + message(err)
-      var m = miradorLoader.item
-      return (m.opened ? "open" : "closed")
-        + " presentation=" + m.activePresentation
-        + " overviewMode=" + m.overviewMode
-        + " selectedCard=" + m.selectedCardIndex
+      return (root.exposeActive ? "open" : "closed")
+        + " windows=" + root.exposeSaved.length
+        + " cells=" + root.exposeRects.length
+        + " hover=" + (root.exposeHoverRect ? root.exposeHoverRect.address : "-")
+        + " ws=" + root.exposeWsId
     }
-    function message(s: string): string { return String(s || "").replace(/\n/g, " ").slice(0, 120) }
   }
 
   // ========================================================================
@@ -1501,10 +1674,11 @@ Item {
     // showing. The app menu takes the full screen too — it is a modal panel,
     // and it needs the keyboard for its search field.
     mask: Region {
-      // Fullscreen block while the float bar is up: it swallows outside
-      // clicks so any of them dismisses it. The workspace strip, its
-      // configuration popup and the app grid live in the nagualstrip
-      // plugin's own window, which carries its own regions.
+      // Fullscreen block while the float bar or the live expose is up: it
+      // swallows outside clicks (dismissing the bar / cancelling the spread)
+      // and keeps follow_mouse from reshuffling the focus over the expose.
+      // The workspace strip, its configuration popup and the app grid live in
+      // the nagualstrip plugin's own window, which carries its own regions.
       Region { x: 0; y: 0; width: root.keysWanted ? panel.width : 0; height: root.keysWanted ? panel.height : 0 }
     }
 
@@ -1596,7 +1770,7 @@ Item {
     // position read through Hyprland (see sampleCursorPos), so an overlay
     // surface that sits on top in a corner cannot swallow the trigger.
 
-    // ---- Keyboard routing (float bar) ----
+    // ---- Keyboard routing (float bar + live expose) ----
     Item {
       id: keyRouter
       anchors.fill: parent
@@ -1605,11 +1779,51 @@ Item {
       Keys.priority: Keys.BeforeItem
       Keys.onPressed: function(event) {
         if (event.key !== Qt.Key_Escape) return
+        if (root.exposeActive) {
+          root.exitExpose("")
+          event.accepted = true
+          return
+        }
         if (root.floatbarOpened) {
           root.closeFloatbar()
           event.accepted = true
         }
       }
+    }
+
+    // ---- Live expose: pointer capture + cell highlight ----
+    // The input region already covers the whole screen while the expose is up
+    // (see the mask above), so this area both keeps the pointer off the windows
+    // — follow_mouse would otherwise reshuffle the focus mid-spread — and turns
+    // a click into a pick. Empty space cancels; the picked window is restored
+    // with everything else and raised.
+    MouseArea {
+      id: exposeMouse
+      anchors.fill: parent
+      z: 60
+      visible: root.exposeActive
+      hoverEnabled: true
+      acceptedButtons: Qt.LeftButton | Qt.RightButton
+      onPositionChanged: function(m) { root.updateExposeHover(m.x, m.y) }
+      onClicked: function(m) {
+        if (!root.exposeActive) return
+        var r = root.exposeHoverRect
+        root.exitExpose(r ? r.address : "")
+      }
+    }
+
+    Rectangle {
+      id: exposeHighlight
+      z: 61
+      visible: root.exposeActive && root.exposeHoverRect !== null
+      x: visible ? root.exposeHoverRect.x - root.exposeOrigin.x : 0
+      y: visible ? root.exposeHoverRect.y - root.exposeOrigin.y : 0
+      width: visible ? root.exposeHoverRect.w : 0
+      height: visible ? root.exposeHoverRect.h : 0
+      color: "transparent"
+      radius: 8
+      border.width: 3
+      border.color: Util.alpha(Color.accent, 0.9)
     }
 
     // ---- Drag-and-drop layer: renders the tile being dragged, following the
