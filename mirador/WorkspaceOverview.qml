@@ -1773,25 +1773,64 @@ Item {
     // Opaque clean-desktop backdrop. A solid fill guarantees the real windows
     // can never bleed through even if the wallpaper has transparent pixels; the
     // wallpaper is painted on top and a light dim keeps the previews readable.
-    Rectangle {
+    Item {
+      id: backdropItem
       anchors.fill: parent
-      color: Color.background
+      opacity: 0.0
+
+      Behavior on opacity {
+        enabled: root.opened
+        NumberAnimation {
+          duration: 110
+          easing.type: Easing.OutCubic
+        }
+      }
+
+      // Opaque clean-desktop backdrop. A solid fill guarantees the real windows
+      // can never bleed through even if the wallpaper has transparent pixels; the
+      // wallpaper is painted on top and a light dim keeps the previews readable.
+      Rectangle {
+        anchors.fill: parent
+        color: Color.background
+        visible: backdropImage.status === Image.Ready
+      }
+
+      Image {
+        id: backdropImage
+        anchors.fill: parent
+        source: root.backgroundSource
+        fillMode: Image.PreserveAspectCrop
+        cache: true
+        asynchronous: false
+        smooth: true
+        sourceSize.width: width * Screen.devicePixelRatio
+        sourceSize.height: height * Screen.devicePixelRatio
+        // The fade only starts once the wallpaper has actually been decoded and
+        // painted; before that the layer stays fully transparent, so the real
+        // desktop dissolves straight into the wallpaper with no dark frame.
+        onStatusChanged: {
+          if (status === Image.Ready && panel.visible) backdropItem.opacity = 1.0
+        }
+      }
+
+      Rectangle {
+        anchors.fill: parent
+        color: Util.alpha(Color.background, 0.25)
+        visible: backdropImage.status === Image.Ready
+      }
     }
 
-    Image {
-      anchors.fill: parent
-      source: root.backgroundSource
-      fillMode: Image.PreserveAspectCrop
-      cache: true
-      asynchronous: true
-      smooth: true
-      sourceSize.width: width * Screen.devicePixelRatio
-      sourceSize.height: height * Screen.devicePixelRatio
-    }
-
-    Rectangle {
-      anchors.fill: parent
-      color: Util.alpha(Color.background, 0.25)
+    // The layer surface paints transparent for its first frame and the backdrop
+    // fades in over it, so the real desktop dissolves into the wallpaper
+    // instead of flashing a solid color. If the wallpaper is already decoded
+    // (cache hit) the fade starts immediately; otherwise it starts from the
+    // image's own onStatusChanged.
+    onVisibleChanged: {
+      if (!visible) {
+        backdropItem.opacity = 0.0
+      } else if (backdropImage.status === Image.Ready) {
+        backdropItem.opacity = 1.0
+      }
     }
 
     MouseArea {

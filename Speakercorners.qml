@@ -331,8 +331,9 @@ Item {
     }
     onStatusChanged: {
       console.log("speakercorners: mirador overlay status", status)
-      if (status === Loader.Error)
-        console.warn("speakercorners: embedded mirador overlay failed to load:", errorString())
+      if (status === Loader.Error) {
+        console.warn("speakercorners: embedded mirador overlay failed to load:")
+      }
     }
   }
 
@@ -1433,11 +1434,13 @@ Item {
     function summon(payload: string): string { root.openMirador(); return "ok" }
     function dismiss(): string { root.closeMirador(); return "ok" }
     function state(): string {
-      if (!miradorLoader.item) return "loading status=" + miradorLoader.status + " err=" + message(miradorLoader.errorString())
+      var err = miradorLoader && miradorLoader.errorString ? miradorLoader.errorString() : ""
+      if (!miradorLoader.item) return "loading status=" + miradorLoader.status + " err=" + message(err)
       return miradorLoader.item.opened ? "open" : "closed"
     }
     function diagnose(): string {
-      if (!miradorLoader.item) return "loading status=" + miradorLoader.status + " err=" + message(miradorLoader.errorString())
+      var err = miradorLoader && miradorLoader.errorString ? miradorLoader.errorString() : ""
+      if (!miradorLoader.item) return "loading status=" + miradorLoader.status + " err=" + message(err)
       var m = miradorLoader.item
       return (m.opened ? "open" : "closed")
         + " presentation=" + m.activePresentation

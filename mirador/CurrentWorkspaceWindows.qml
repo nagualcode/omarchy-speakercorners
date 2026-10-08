@@ -66,6 +66,18 @@ Item {
   // window cannot swallow the screen.
   readonly property real previewMaxAreaFraction: 0.25
 
+  property bool enterAnimated: false
+
+  onVisibleChanged: {
+    if (visible) {
+      // Start the entrance on the very next frame; no deferred call so the
+      // previews begin moving with the backdrop fade instead of one tick later.
+      enterAnimated = true
+    } else {
+      enterAnimated = false
+    }
+  }
+
   signal windowActivated(var toplevel)
 
   Connections {
@@ -231,6 +243,28 @@ Item {
         liveCaptureEnabled: root.livePreviews && root.visible
         onActivated: root.windowActivated(previewToplevel)
         onTabActivated: function(targetToplevel) { root.windowActivated(targetToplevel) }
+
+        // Animação suave estilo macOS Exposé
+        opacity: root.enterAnimated ? 1.0 : 0.0
+        scale: root.enterAnimated ? 1.0 : 0.94
+
+        transformOrigin: Item.Center
+
+        Behavior on opacity {
+          enabled: root.enterAnimated
+          NumberAnimation {
+            duration: 120
+            easing.type: Easing.OutCubic
+          }
+        }
+
+        Behavior on scale {
+          enabled: root.enterAnimated
+          NumberAnimation {
+            duration: 140
+            easing.type: Easing.OutCubic
+          }
+        }
       }
     }
   }
