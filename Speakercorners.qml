@@ -510,9 +510,15 @@ Item {
   // repeats, which takes on the order of ~16k windows.)
   property int cascadeWsId: -1
   property string cascadeMonitorsJson: ""
+  // Focused window at the moment the corner fires: when it is "maximized"
+  // (the manual hyprbar double-click expand to the whole work area, or a real
+  // fullscreen state) it is kept as is and the cascade lands on top of it.
+  property string cascadeFocusAddress: ""
   function cascadeWorkspaceFloats() {
     root.cascadeWsId = Number(root.focusedWorkspaceId)
     if (!isFinite(root.cascadeWsId)) return
+    var active = Hyprland.activeToplevel
+    root.cascadeFocusAddress = active ? String(active.address || "").toLowerCase() : ""
     cascadeMonitorsProc.running = true
   }
   Process {
@@ -538,19 +544,11 @@ Item {
     var wsId = Number(root.cascadeWsId)
     root.cascadeWsId = -1
     if (!isFinite(wsId)) return
+    var keepAddr = root.cascadeFocusAddress
+    root.cascadeFocusAddress = ""
     var clients = []
     try { clients = JSON.parse(String(clientsText || "[]")) } catch (e) { return }
     if (!Array.isArray(clients)) return
-    var wins = []
-    for (var i = 0; i < clients.length; i++) {
-      var c = clients[i]
-      if (!c || c.mapped === false || c.hidden === true) continue
-      if (!c.workspace || Number(c.workspace.id) !== wsId) continue
-      var addr = String(c.address || "")
-      if (!/^0x[0-9a-fA-F]+$/.test(addr)) continue
-      wins.push({ address: addr, floating: c.floating === true, fullscreen: Number(c.fullscreen) || 0 })
-    }
-    if (wins.length === 0) return
     var monitors = []
     try { monitors = JSON.parse(String(root.cascadeMonitorsJson || "[]")) } catch (e) { root.cascadeMonitorsJson = ""; return }
     root.cascadeMonitorsJson = ""
@@ -566,12 +564,40 @@ Item {
     var resR = Number(res[2]) || 0
     var resB = Number(res[3]) || 0
     // Same box a tiled maximized window occupies: reserved strips excluded,
-    // fixed 10px top inset and 1px border on top of it.
+    // fixed 10px top inset and 1px border on top of it. It is also exactly the
+    // box the hyprbar double-click expand produces (titlebar-dblclick.sh).
     var workTop = 10
     var workX = resL + 1
     var workY = workTop + 1
     var workW = lw - resL - resR - 2
     var workH = lh - resB - workTop - 2
+    var wins = []
+    // Focused window parked in place: it stays exactly as it is and the rest
+    // of the workspace cascades on top of it. "Maximized" here is the manual
+    // hyprbar double-click expand — a plain resize to (almost) the whole work
+    // area with no fullscreen flag — using the same 0.85 threshold that
+    // script uses to decide a window is big.
+    var parkAddr = ""
+    var BIG_RATIO = 0.85
+    for (var i = 0; i < clients.length; i++) {
+      var c = clients[i]
+      if (!c || c.mapped === false || c.hidden === true) continue
+      if (!c.workspace || Number(c.workspace.id) !== wsId) continue
+      var addr = String(c.address || "")
+      if (!/^0x[0-9a-fA-F]+$/.test(addr)) continue
+      // `focusHistoryID === 0` is the compositor's own "most focused" mark and
+      // covers the case where Hyprland.activeToplevel lagged behind the corner
+      // press. `fullscreen`: 0 = none, 1 = maximize, 2 = fullscreen.
+      var isFocused = (addr.toLowerCase() === keepAddr) || Number(c.focusHistoryID) === 0
+      var sz = Array.isArray(c.size) ? c.size : [0, 0]
+      var fillsWork = Number(sz[0]) >= BIG_RATIO * workW && Number(sz[1]) >= BIG_RATIO * workH
+      if (isFocused && (fillsWork || Number(c.fullscreen) !== 0)) {
+        parkAddr = addr
+        continue
+      }
+      wins.push({ address: addr, floating: c.floating === true, fullscreen: Number(c.fullscreen) || 0 })
+    }
+    if (wins.length === 0) return
     var WIN_W = 700, WIN_H = 500
     var cx = Math.max(0, workW - WIN_W)
     var cy = Math.max(0, workH - WIN_H)
@@ -591,6 +617,10 @@ Item {
       var py = workY + ((k * dy) % (cy + 1))
       Quickshell.execDetached(["hyprctl", "dispatch", 'hl.dsp.window.resize({ x = ' + WIN_W + ', y = ' + WIN_H + ',' + base + ' })'])
       Quickshell.execDetached(["hyprctl", "dispatch", 'hl.dsp.window.move({ x = ' + px + ', y = ' + py + ',' + base + ' })'])
+      // A maximized window was parked: lift the freshly cascaded window above
+      // it so the cascade always lands on top of the kept window.
+      if (parkAddr !== "")
+        Quickshell.execDetached(["hyprctl", "dispatch", 'hl.dsp.window.alter_zorder({ mode = "top",' + base + ' })'])
     }
   }
 
