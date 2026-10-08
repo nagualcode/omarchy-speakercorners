@@ -1,120 +1,67 @@
 # 🗣️ Speaker Corners
 
-> Three corners. One lightweight, fully click-through Omarchy plugin.
-> Hot corners that **speak** — and a floating command center that listens.
+> Hot corners that react. One lightweight, fully click-through Omarchy plugin.
 
-**Speaker Corners** mashes an icon panel (bottom-left), a floating workspace
-overview and hot-corner actions (Omarchy menu, app dropdowns, window layout
-commands) into a single masked, click-through overlay. No window stack, no
-bloat — one surface, `~1.5 KB` of attitude per corner.
-
-> 📦 **The workspace strip, its settings popup and the smart app grid moved out
-> into their own plugin — [nagualstrip](https://github.com/nagualcode/omarchy-nagualstrip).**
-> Install both to keep the pre-split behaviour (see
-> [Migration](#-migration-from-v1-when-the-strip-lived-here)).
-
-![izi](https://img.shields.io/badge/omarchy-ready-blueviolet)
+![omarchy-ready](https://img.shields.io/badge/omarchy-ready-blueviolet)
 ![hyprland](https://img.shields.io/badge/hyprland-native-2ea44f)
 
 ![preview](preview.jpg)
----
-
-## 🎯 What it does
-
-- **🖱️ Five hot corners** — park the cursor, let a tiny dwell timer fire: run
-  the live expose, cascade the floats, toggle window modes, toggle the icon
-  panel, or run your own command (the bottom-center corner ships
-  `omarchy-shell workspace-overview toggle`, which is how the separate
-  `nagualstrip` plugin is summoned from the corners). Everything else stays
-  fully click-through.
-- **🗺️ Live expose (bottom-right)** — the classic Exposé, but with the *real*
-  windows: the corner records where every window of the focused workspace is,
-  floats them and moves them into a gap grid so all of them are visible at once,
-  none overlapping, each keeping its aspect ratio (never upscaled). Nothing is
-  screenshotted — entering and leaving is a single `hyprctl --batch` of
-  dispatches, so there is no preview layer to burn CPU. While the spread is up
-  the panel owns the pointer (the desktop cannot be clicked through, and
-  `follow_mouse` cannot reshuffle the focus): a cell highlights under the
-  cursor, and clicking it restores every original geometry and brings that
-  window to the front. Clicking empty space, pressing `Esc` or dwelling the
-  corner again restores everything. The originals are parked in
-  `~/.local/state/omarchy/speakercorners-expose.json`, so a shell restart in the
-  middle of a spread puts the desktop back on the next start. It is addressed by
-  the `mirador` corner action or `omarchy-shell mirador toggle`.
-- **🌆 Workspace strip + app grid → nagualstrip** — the floating workspace
-  strip (bottom-center), its right-click settings popup and the smart
-  MRU-ranked app grid moved out to their own plugin:
-  [`nagualstrip`](https://github.com/nagualcode/omarchy-nagualstrip), on their
-  own Overlay window. Speaker Corners still drives them over IPC — the
-  bottom-left `toggle-hide-chrome` corner fades the strip together with the bar,
-  opening the icon panel suspends it, and closing the panel restores exactly
-  what was on screen — but this plugin no longer draws any of it.
-- **🧊 Icon panel (bottom-left)** — a compact card nerd-friendly enough to live on:
-  - **🕐 A clock** that opens the real menu-bar calendar when clicked.
-  - **🔋 Smart icons** — battery (with plug/AC state), Wi-Fi (signal strength),
-    Bluetooth (off / on / connected) — mirroring the menu bar, live.
-  - **✨ Live indicators** — night light, do-not-disturb, reminders,
-    stay-awake, screen recording — with accent highlighting and click-to-toggle.
-  - **🚀 Launcher actions** — 🌍 browser, 🖥️ terminal and 📁 file manager use
-    your system defaults via the `uwsm` session (`uwsm-app`); the browser opens
-    in **normal mode** through its `.desktop` entry (`gtk-launch`). 📄 the text
-    editor opens floating FeatherPad through Hyprland's own executor.
-  - **🧲 Draggable grid** — drag any tile to reorder it; the layout is persisted
-    to your `shell.json` and comes back exactly where you left it.
-  - **🧘 Toggle button** — show/hide the menu bar itself.
 
 ---
 
-## 📦 Installation
+## 🎯 The corners
+
+Dwell on a corner and it fires — everything else stays fully click-through.
+
+| Corner | Name | Default | What it does |
+| ------ | ---- | ------- | ------------ |
+| bottom-right | **Expose** | live expose | Spreads the *real* windows of the focused workspace into a gap grid — all visible, none overlapping, aspect kept, never upscaled. Nothing is screenshotted: entering and leaving is a single `hyprctl --batch`, so there is no preview layer to burn CPU. The window under the cursor gets a 50% tint shaped like its own rounded corners; click it to restore every original geometry and bring it to the front. Empty click, `Esc` or dwelling the corner again restores everything. If the shell dies mid-spread, the originals are parked in `~/.local/state/omarchy/speakercorners-expose.json` and put back on next start. |
+| bottom-left | **Zen** | hide chrome | Hides the menu bar and workspace strip for a clean, focused desktop; dwelling again brings everything back. |
+| top-left | **Cascade** | cascade floats | Floats every window of the active workspace and lays them out as a diagonal cascade (700×500, sliding right-and-down), so each one keeps a visible sliver. Idempotent — re-dwelling just re-runs it. |
+| top-right | **Arrange** | window modes | Converts the active workspace by majority: all floating → tiled, all tiled → floating; mixed workspaces follow the majority. When tiling, a fullscreen window is pulled back out so the split genuinely divides the screen. |
+| bottom-center | **Overview** | workspace strip | Summons the workspace strip / smart app grid — which live in the separate [nagualstrip](https://github.com/nagualcode/omarchy-nagualstrip) plugin. Speaker Corners drives it over IPC (`omarchy-shell workspace-overview toggle`); with only this plugin installed the corner is just a rebindable command. |
+
+Any corner can also be triggered over IPC: `omarchy-shell speakercorners triggeraction <name>`.
+
+## 🧊 Icon panel
+
+The float-bar (beside the clock, bottom-left) packs a nerd-friendly command center:
+live indicators (night light, DND, reminders, stay-awake, screen recording),
+Wi-Fi / Bluetooth / battery widgets, browser / terminal / text / folder
+launchers through the `uwsm` session, a **draggable grid** you persist to
+`shell.json`, and a show/hide toggle for the menu bar.
+
+---
+
+## 📦 Install
 
 ```sh
 omarchy plugin add https://github.com/nagualcode/omarchy-speakercorners.git --enable
+# optional — powers the Overview corner (workspace strip + app grid)
+omarchy plugin add https://github.com/nagualcode/omarchy-nagualstrip.git --enable
 omarchy restart shell
 ```
 
-### Removal
+## 🗑️ Uninstall
 
 ```sh
 omarchy plugin remove nagualcode.speakercorners
-```
-
-## 📦 Migration from v1 (when the strip lived here)
-
-Speaker Corners **2.0** is hot corners + icon panel + live expose only.
-The workspace strip, its settings popup, the smart app grid and the `ws*`
-config keys moved out to their own plugin,
-[nagualstrip](https://github.com/nagualcode/omarchy-nagualstrip).
-
-| Before (v1)                                                       | Now                                                                    |
-| ----------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `ws*`, `appMenuRows` keys in the `speakercorners` entry           | same keys in a `nagualcode.nagualstrip` entry                          |
-| `.../.local/state/speakercorners/app-usage.json` (app ranking)    | `.../.local/state/nagualstrip/app-usage.json`                          |
-| `~/.config/omarchy/.speakercorners-reserve`                       | `~/.config/omarchy/.nagualstrip-reserve` — `monitors.lua` must read it |
-| `omarchy-shell speakercorners-apps toggle`                        | still works — legacy target kept by `nagualstrip`                      |
-| `omarchy-shell workspace-overview toggle`                         | still works — legacy target kept by `nagualstrip`                      |
-
-```sh
-omarchy plugin add https://github.com/nagualcode/omarchy-nagualstrip.git --enable
-# keep the app-grid ranking and the bottom reserved area
-mv "${XDG_STATE_HOME:-~/.local/state}/speakercorners" \
-   "${XDG_STATE_HOME:-~/.local/state}/nagualstrip" 2>/dev/null
-mv ~/.config/omarchy/.speakercorners-reserve \
-   ~/.config/omarchy/.nagualstrip-reserve 2>/dev/null
 omarchy restart shell
 ```
 
-Then point `~/.config/hypr/monitors.lua` at `.nagualstrip-reserve` — the
-snippet is in the [nagualstrip README](https://github.com/nagualcode/omarchy-nagualstrip#bottom-reserved-area).
-The `wsToggleEnabled` key (read from the strip plugin's entry) still gates the
-bottom-center corner, so a pinned strip keeps that corner inert.
+> **Migration from v1:** the workspace strip, its settings popup and the smart
+> app grid moved out of Speaker Corners 2.0 into
+> [nagualstrip](https://github.com/nagualcode/omarchy-nagualstrip); the legacy
+> `omarchy-shell workspace-overview toggle` and `speakercorners-apps` targets
+> still work there.
+
+---
 
 ## ⚙️ Configuration
 
 Settings live in a `plugins` entry in `~/.config/omarchy/shell.json`
-(`"id": "speakercorners"` — the plugin only reads the entry whose id matches
-that exact string). Every key is optional and falls back to a default, so the
-minimum entry is just `{ "id": "speakercorners" }`. The full form, for
-example:
+(`"id": "speakercorners"`). Every key is optional — the minimum entry is just
+`{ "id": "speakercorners" }`:
 
 ```jsonc
 {
@@ -134,88 +81,22 @@ example:
   "bottomRightAction": "mirador",
   "bottomRightCommand": "",
   "bottomCenterAction": "command",
-  "bottomCenterCommand": "omarchy-shell workspace-overview toggle",
-  "floatGridOrder": [
-    "action:browser",
-    "action:terminal",
-    "action:text",
-    "action:folder",
-    "toggle:toggle",
-    "indicator:NightLight",
-    "indicator:Dnd",
-    "indicator:Reminder",
-    "indicator:StayAwake",
-    "indicator:ScreenRecording",
-    "widget:omarchy.bluetooth",
-    "widget:omarchy.network",
-    "widget:omarchy.audio",
-    "widget:omarchy.monitor",
-    "widget:omarchy.power"
-  ]
+  "bottomCenterCommand": "omarchy-shell workspace-overview toggle"
 }
 ```
 
-### Launcher actions (hardcoded)
-
-The float-bar launcher grid ships with four buttons. All of them are attached
-to the `uwsm` Wayland session via `uwsm-app` so they reliably surface a window.
-The browser is launched through its `.desktop` entry with `gtk-launch`, which
-opens the system default browser in **normal mode** (Omarchy's
-`omarchy launch browser` forces incognito, so it's skipped). The text editor
-is dispatched by Hyprland itself so FeatherPad always opens as a floating
-window:
-
-| Icon | Label | Command |
-| ---- | ----- | ------- |
-| 🌍 | Browser | `uwsm-app -- gtk-launch <default browser>.desktop` (normal mode) |
-| 🖥️ | Terminal | `omarchy launch terminal` (system default terminal) |
-| 📄 | Text | `hyprctl eval 'hl.dispatch(hl.dsp.exec_cmd("featherpad", { float = true }))'` |
-| 📁 | Folder | `omarchy launch nautilus` (system default file manager) |
-
-Edit `actionEntries` to change them.
-
 ### Corner actions
 
-| Key                 | values                                              |
-| ------------------- | --------------------------------------------------- |
-| `topLeftAction`     | `command` / `cascade-floats` / `toggle-window-modes` / `none` — cascade-floats by default |
-| `topRightAction`    | `command` / `toggle-window-modes` / `none` — window-mode toggle by default |
-| `bottomLeftAction`  | `command` / `toggle-hide-chrome` / `none` — hide-chrome toggle by default |
-| `bottomRightAction` | `command` / `mirador` / `none` — live expose by default |
-| `bottomCenterAction`| `command` / `none` — `omarchy-shell workspace-overview toggle` by default, i.e. the separate `nagualstrip` plugin's strip. With only this plugin installed it is just a command you can rebind; the strip itself lives in [nagualstrip](https://github.com/nagualcode/omarchy-nagualstrip) |
-
-`toggle-window-modes` arranges the active workspace by majority instead of
-blindly flipping: if every window floats it goes tiled, if every window is tiled
-it goes floating, and a mixed workspace follows the majority (the minority
-windows are converted; a tie resolves to tiled). When going tiled it also
-understands that a fullscreen/maximized window would keep swallowing the split:
-with more than one window on the workspace it pulls such a window back out of
-fullscreen so the screen genuinely divides between the apps.
-`cascade-floats` pulls every mapped window on the active workspace out of
-tiling (and out of fullscreen/maximize) and lays them out as a **heuristic
-cascade**: each one floats at 700×500 and slides one step right-and-down from
-the window before it. The two steps adapt to how crowded the workspace is
-(40–110px horizontal, 30–80px vertical) and wrap modulo the free space, so once
-the diagonal runs off an edge it continues from a shifted row; because the
-steps are always coprime with the free extents, no two windows ever land on the
-exact same corner, so a covered window always keeps a visible sliver under the
-one on top. The layout is idempotent: re-dwelling the corner just re-runs it.
-`toggle-hide-chrome` hides the bar and panel layer and, when
-[nagualstrip](https://github.com/nagualcode/omarchy-nagualstrip) is installed,
-fades its workspace strip together with them: it fires
-`omarchy-shell nagualstrip setchrome on` over IPC, the strip hides at once and
-flashes back on the next workspace switch (bottom-left corner). Any action can
-also be triggered over IPC with
-`omarchy-shell speakercorners triggeraction <name>`.
+| Key | values |
+| --- | ------ |
+| `topLeftAction` | `command` / `cascade-floats` / `toggle-window-modes` / `none` |
+| `topRightAction` | `command` / `toggle-window-modes` / `none` |
+| `bottomLeftAction` | `command` / `toggle-hide-chrome` / `none` |
+| `bottomRightAction` | `command` / `mirador` / `none` — the live expose |
+| `bottomCenterAction` | `command` / `none` — `workspace-overview toggle` by default |
 
 Each `*Command` runs via `bash -lc`, so `omarchy-*` helpers and your shell
 niceties are all fair game.
-
-### Drag order
-
-`floatGridOrder` is written automatically when you drag tiles, so you usually
-never touch it by hand. New launcher actions appear at the front until you pin
-them somewhere.
 
 ---
 
@@ -226,7 +107,7 @@ them somewhere.
 - A **Nerd Font** on the system (default: `JetBrainsMono Nerd Font`) for the
   advanced glyphs
 - Optional: [nagualstrip](https://github.com/nagualcode/omarchy-nagualstrip)
-  for the workspace strip / app grid the bottom-center corner drives
+  for the workspace strip / app grid the **Overview** corner drives
 
 ## 🧱 Roof tiles
 
