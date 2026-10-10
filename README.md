@@ -52,14 +52,6 @@ applies to the running corners immediately. Scripts that prefer raw IPC can
 use `omarchy-shell speakercorners corner "<edge> <action> [command...]"` with
 the payload quoted as a single argument.
 
-## 🧊 Icon panel
-
-The float-bar (beside the clock, bottom-left) packs a nerd-friendly command center:
-live indicators (night light, DND, reminders, stay-awake, screen recording),
-Wi-Fi / Bluetooth / battery widgets, browser / terminal / text / folder
-launchers through the `uwsm` session, a **draggable grid** you persist to
-`shell.json`, and a show/hide toggle for the menu bar.
-
 ---
 
 ## 📦 Install
@@ -102,9 +94,6 @@ Settings live in a `plugins` entry in `~/.config/omarchy/shell.json`
   "enabled": true,
   "dwellMs": 139,          // how long the pointer must rest to fire (120–3000)
   "targetSize": 8,         // hot-corner hitbox, in px
-  "animations": true,      // false to disable the icon-panel slide
-  "clockFormat": "dddd HH:mm",
-  "cardWidth": "auto",     // or a fixed px width
   "topLeftAction": "cascade-floats",
   "topLeftCommand": "",
   "topRightAction": "toggle-window-modes",
@@ -137,16 +126,13 @@ niceties are all fair game.
 
 - **Omarchy** (shell + `omarchy-shell` IPC)
 - **Hyprland** (native `WlrLayershell` + Hyprland IPC)
-- A **Nerd Font** on the system (default: `JetBrainsMono Nerd Font`) for the
-  advanced glyphs
 - Optional: [nagualstrip](https://github.com/nagualcode/omarchy-nagualstrip)
   for the workspace strip / app grid the **Overview** corner drives
 
 ## 🧱 Roof tiles
 
-- `Speakercorners.qml` — the whole single-surface overlay: hot corners, the
-  icon panel and the live expose
-- `IconModel.js` — app icon resolution (a faithful subset of Omarchy's HUD model)
+- `Speakercorners.qml` — the whole single-surface overlay: hot corners and the
+  live expose
 - `bin/omarchy-speakercorners-corner` — the command-line corner control
 
 ## 🚗 License
